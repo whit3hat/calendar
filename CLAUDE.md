@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A physical wall-mounted family calendar with a touchscreen display, running on a Raspberry Pi. Syncs bidirectionally with Apple Calendar (iCloud) so family members can add and view events from their iPhones or directly on the wall display.
 
-**Current status: Phases 1–5 complete. Phase 6 (event editing) is in active development.**  Hardware is on order. Next step is deploying to the Pi when it arrives.
+**Current status: All six phases are complete.** Hardware is on order. Next step is deploying to the Pi when it arrives.
 
 ## Repository Structure
 
@@ -137,27 +137,23 @@ A Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
 - WMO code → emoji/label lookup via `WMO_CODES` map (covers all 30 standard WMO interpretation codes); unmapped codes fall back to `🌡️ Unknown`
 - Forecast date strings parsed as `'T12:00:00'` (local noon) to prevent UTC-midnight timezone shifts on day-of-week label
 
-### Phase 6 — Event Editing & Deletion 🚧 In Development
-Extends the existing event popover with Edit and Delete actions for non-recurring events. Recurring events are intentionally out of scope (RRULE/EXDATE/RECURRENCE-ID handling is complex; they will show a "can't edit recurring events" message).
+### Phase 6 — Event Editing & Deletion ✅ Complete
+The event popover now shows **Edit** and **Delete** buttons for non-recurring events. Recurring events show a "use Apple Calendar" note instead. Changes sync to iCloud within 5 minutes via vdirsyncer.
 
 **Backend**
-- `PUT /api/events/:uid` — locate the event's `.ics` file by scanning CALENDAR_DIR subdirectories, parse it with node-ical, overwrite only the edited fields (title, date, time, calendar, notes), increment the `SEQUENCE` counter, rewrite the file. vdirsyncer picks up the change on its next run and pushes to iCloud.
-- `DELETE /api/events/:uid` — find and delete the `.ics` file. vdirsyncer detects the deletion and removes the event from iCloud.
-- Both endpoints must validate that the resolved file path stays within CALENDAR_DIR (directory traversal guard, same pattern as `POST /api/events`).
-- Recurring events are detected by the presence of an `RRULE` property in the parsed component; return 422 with a clear message if found.
+- `findEventFile(uid)` — scans all CALENDAR_DIR subdirectories, parsing each `.ics` until it finds the matching `component.uid`. Returns `{ filePath, calendarName, component }` or null.
+- `extractPreservedVEventLines(rawContent)` — unfolds RFC 5545 continuation lines, then extracts every VEVENT property that the app does NOT manage (`VALARM` blocks, `X-APPLE-*`, `ORGANIZER`, attendees, etc.) so they survive an edit without being stripped.
+- `PUT /api/events/:uid` — validates input; returns 422 if `component.rrule` is present; reads and preserves unknown ICS fields; increments `SEQUENCE`; re-folds preserved lines via `foldLine()`; handles calendar moves atomically (write new file first, then unlink old — prefer duplicate over data loss).
+- `DELETE /api/events/:uid` — returns 422 if recurring; deletes the `.ics` file; vdirsyncer propagates the deletion to iCloud.
+- `loadEvents()` sets `isRecurring: !!component.rrule` on each event's `extendedProps`.
 
 **Frontend**
-- "Edit" button in the event detail popover opens the existing Add Event modal pre-filled with the event's current data; on save it calls `PUT` instead of `POST`.
-- "Delete" button in the popover shows a confirmation prompt ("Delete this event?"), then calls `DELETE` and removes the event from the FullCalendar instance immediately.
-- After a successful edit or delete, call `calendarInstance.refetchEvents()` to sync the grid.
-- Non-recurring events only — if the event has an `isRecurring` flag (set by the server), the Edit and Delete buttons are replaced with a note: "Recurring events can't be edited here — use Apple Calendar."
-
-**Key implementation notes**
-- The UID used in the API route comes from `fcEvent.id` on the FullCalendar event object (set from `component.uid` in `loadEvents()`).
-- File lookup: iterate subdirs of CALENDAR_DIR, parse each `.ics`, match on `component.uid`. Cache the uid→filepath mapping if performance matters (unlikely with typical calendar sizes).
-- Preserve unknown ICS properties when editing — parse the raw file, replace only the known fields, write the rest back unchanged. This avoids stripping iCloud-specific extensions (X-APPLE-*, VALARM, etc.).
-- `SEQUENCE` must be incremented on every edit so iCloud accepts the update as a newer version.
-- The `extendedProps.isRecurring` flag should be set in `loadEvents()` on the server by checking `!!component.rrule`.
+- `editingEventUid` state (`null` = add mode, UID string = edit mode) and `popoverEvent` state (the FC event object while the popover is open).
+- `openEditModal(fcEvent)` — sets `editingEventUid`, updates modal title/button text, pre-fills all form fields. Date uses `localDateString()` (not `toISOString()`) to avoid UTC-midnight timezone shift on the Pi.
+- `populateCalendarSelect(selectedCalendar)` — optional parameter pre-selects the event's current calendar.
+- `handleFormSubmit()` — branches on `editingEventUid`: POSTs to `/api/events` when null, PUTs to `/api/events/:uid` when set. Captures `isEditing` before the `await` so the `finally` button text is correct even after `closeModal()` nulls `editingEventUid`.
+- Edit button listener captures `popoverEvent` into a local variable *before* calling `closeEventPopover()` (which nulls it), then passes it to `openEditModal()`.
+- Delete confirmation is inline within the popover (not a second modal) — better for touchscreen UX. Error on delete is shown in the confirm-text area with a Retry button.
 
 ## What We Are NOT Building
 - User login / authentication
@@ -234,6 +230,16 @@ const SLEEP_HOUR      = 0;      // midnight
 const WAKE_HOUR       = 6;      // 6 AM
 const WAKE_TIMEOUT_MS = 30000;  // 30 sec temporary wake on touch
 ```
+
+### Event Editing & Deletion (server.js + index.html)
+- `findEventFile(uid)` — O(n) scan of all .ics files; fine for household calendar sizes
+- `extractPreservedVEventLines()` — unfolds physical lines → logical lines first (RFC 5545 §3.1 continuation = leading SP/HT); then depth-tracks `BEGIN:`/`END:` pairs so entire `VALARM` sub-components are preserved as a block
+- Managed set: `UID`, `DTSTAMP`, `DTSTART`, `DTEND`, `SUMMARY`, `DESCRIPTION`, `SEQUENCE` — these are rewritten from the form; everything else is preserved verbatim
+- Preserved lines are re-folded through `foldLine()` before writing — they were unfolded during extraction, so this round-trip is required
+- `SEQUENCE` incremented: `(parseInt(component.sequence || '0', 10) || 0) + 1`
+- Calendar move is atomic: `writeFileSync(newPath)` then `unlinkSync(oldPath)` — never the reverse
+- Frontend: `isEditing` captured before the `await` in `handleFormSubmit()` because `closeModal()` on success sets `editingEventUid = null` before the `finally` block runs
+- The edit button listener must capture `popoverEvent` into a local `const ev` before `closeEventPopover()` (which sets `popoverEvent = null`) then pass `ev` to `openEditModal(ev)`
 
 ### Weather (server.js + index.html)
 - API: `https://api.open-meteo.com/v1/forecast` — no key, lat/lon only

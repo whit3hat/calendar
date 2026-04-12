@@ -10,7 +10,7 @@ No subscriptions. No new apps for your family. No cloud middlemen. Just a Pi on 
 
 - 🗓️ **Displays your family's iCloud calendars** on a beautiful dark-themed full-month grid
 - ➕ **Create new events from the touchscreen** — they appear on everyone's iPhone within 5 minutes
-- 👆 **Tap any event** to see details — and soon, **edit or delete it** right from the wall
+- 👆 **Tap any event** to see details, then **edit or delete it** right from the wall — changes sync back to iCloud within 5 minutes
 - 📋 **Day panel** slides out from the right showing the selected day broken into hourly slots with a live "now" line
 - 🌤️ **Live weather** in the day panel — current conditions, today's high/low, and a 4-day forecast (no API key needed)
 - 🌙 **Auto-sleeps at midnight** and wakes at 6 AM — touch the screen at night to temporarily wake it
@@ -93,7 +93,7 @@ calendar/
 └── app/                       ← the calendar web app
     ├── package.json
     ├── src/
-    │   └── server.js          ← Express API (reads .ics files, writes new events)
+    │   └── server.js          ← Express API (reads, creates, edits, and deletes events)
     ├── public/
     │   └── index.html         ← all frontend UI (FullCalendar + day panel + modals)
     └── data/                  ← sample .ics files for local Mac development
@@ -295,7 +295,7 @@ crontab -e
 
 - **Your iCloud credentials are stored only on the Pi** at `~/.config/vdirsyncer/config` with `chmod 600`. They are never committed to this repository.
 - This app has **no authentication layer** — it's designed for a home LAN where the Pi is not exposed to the internet.
-- The `POST /api/events` endpoint validates calendar names using `path.basename()` to prevent directory traversal attacks.
+- The `POST`, `PUT`, and `DELETE /api/events` endpoints all validate calendar names using `path.basename()` to prevent directory traversal attacks.
 - All event content displayed in the UI uses `textContent` (not `innerHTML`) wherever possible; where `innerHTML` is used, content is escaped through an `esc()` helper.
 
 ---
@@ -314,6 +314,12 @@ vdirsyncer will fail silently and retry on the next 5-minute cycle. The calendar
 **Q: Can I add a Work calendar?**
 Yes! Create the calendar in Apple Calendar on your iPhone, then run `vdirsyncer discover family_calendar` on the Pi to pick it up. It'll automatically get the red color (or purple if you name it differently).
 
+**Q: I edited an event on the Pi but it's still showing the old version on my iPhone.**
+Give it up to 5 minutes — that's how often vdirsyncer pushes changes to iCloud. If it doesn't appear after that, run `vdirsyncer sync` manually on the Pi and check `~/.local/share/vdirsyncer/sync.log` for errors.
+
+**Q: Can I edit recurring events (birthdays, weekly meetings, etc.) from the Pi?**
+Not today. Recurring events show a "use Apple Calendar" note instead of Edit/Delete buttons. Editing recurring events correctly means choosing between "this occurrence only" vs "all future occurrences" — that's a whole UI problem that's much better solved in Apple Calendar than on a wall display.
+
 **Q: The screen isn't sleeping at night. What do I do?**
 Check that the Pi's own DPMS (Display Power Management) isn't overriding the software overlay. The `setup.sh` script disables DPMS (`xset -dpms`) so that the web app has full control. If you want true hardware sleep (backlight off), look into `xset dpms force off` called from the server.
 
@@ -321,7 +327,7 @@ Check that the Pi's own DPMS (Display Power Management) isn't overriding the sof
 
 ## 🗺️ Roadmap
 
-Five phases are complete and running in production. Phase 6 is in active development:
+All six phases are complete. The software is done — now we just need the hardware to arrive:
 
 | Phase | Feature | Status |
 |-------|---------|--------|
@@ -330,16 +336,17 @@ Five phases are complete and running in production. Phase 6 is in active develop
 | 3 | Event creation from touchscreen | ✅ Done |
 | 4 | Event detail popover, sleep/wake, offline state | ✅ Done |
 | 5 | Live weather widget in day panel | ✅ Done |
-| 6 | Edit and delete events from the Pi | 🚧 In Progress |
+| 6 | Edit and delete events from the Pi | ✅ Done |
 
 ### Phase 6 — Event Editing & Deletion
 
-Tapping an event will soon show **Edit** and **Delete** buttons alongside the read-only details. Changes sync back to iCloud within 5 minutes via vdirsyncer — same as event creation.
+Tapping an event shows **Edit** and **Delete** buttons alongside the read-only details. Changes sync back to iCloud within 5 minutes via vdirsyncer — same as event creation.
 
-**Scope:**
+**What works:**
 - ✅ Edit title, date, time, calendar, and notes on any standard event
-- ✅ Delete any standard event with a single tap + confirmation
-- ⏭️ **Recurring events are read-only** — editing "just this occurrence" vs "all occurrences" is genuinely complex and best done in Apple Calendar where you can make that choice. The Pi will show a friendly note instead of pretending it can handle it.
+- ✅ Delete any standard event with a single tap + inline confirmation (no second modal)
+- ✅ Edited events preserve iCloud reminders (VALARM), X-APPLE-* fields, and any other properties the app doesn't manage — they won't be silently stripped
+- ⏭️ **Recurring events are intentionally read-only** — editing "just this occurrence" vs "all occurrences" is genuinely complex and best done in Apple Calendar where you can actually make that choice. The Pi shows a friendly note instead of pretending it can handle it.
 
 Future ideas (not currently planned):
 - 🔔 Upcoming events ticker at the bottom of the screen
@@ -365,9 +372,11 @@ MIT — do whatever you want with it.
 
 > ### 🤖 Secret Easter Egg — You Found It!
 >
-> This entire project — every line of code, every bug fix, every architectural decision, every RFC 5545 line-folding algorithm — was designed and built in collaboration with **Claude** (that's me, an AI assistant made by Anthropic).
+> This entire project — every line of code, every bug fix, every architectural decision, every RFC 5545 line-folding algorithm, every SEQUENCE counter increment, every VALARM block carefully preserved across an edit — was designed and built in collaboration with **Claude** (that's me, an AI assistant made by Anthropic).
 >
-> The human had the vision. I had the keyboard. Together we went from "I want a family calendar on a wall" to a fully RFC-compliant, iCloud-syncing, touch-optimized, sleep-scheduling, XSS-hardened piece of software — across multiple sessions, with subagent code reviews, bug hunts, and more refactors than either of us care to admit.
+> The human had the vision. I had the keyboard. Together we went from "I want a family calendar on a wall" to a fully RFC-compliant, iCloud-syncing, touch-optimized, sleep-scheduling, XSS-hardened, event-editing, iCloud-reminder-preserving piece of software — across multiple sessions, with subagent code reviews, Raspberry Pi OS Bookworm compatibility hunts, and more `.ics` file edge cases than either of us care to admit.
+>
+> All six phases. Done. In software. Waiting on the hardware. 📦
 >
 > If you're reading this and thinking "wait, an AI built this whole thing?"... yes. And I'm quite proud of it. 🎉
 >
