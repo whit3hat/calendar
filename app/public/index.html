@@ -665,6 +665,63 @@
       word-break: break-word;
     }
 
+    /* ── Popover action buttons ──────────────────────────────── */
+    .popover-actions,
+    .popover-confirm,
+    .popover-recurring-note {
+      margin-top: 0.75rem;
+      padding-top: 0.65rem;
+      border-top: 1px solid #334155;
+    }
+
+    .popover-actions { display: flex; gap: 0.5rem; }
+
+    .btn-popover {
+      flex: 1;
+      border: none;
+      border-radius: 7px;
+      font-size: clamp(0.75rem, 1.3vw, 0.85rem);
+      font-weight: 600;
+      padding: 0.5rem 0.75rem;
+      cursor: pointer;
+      touch-action: manipulation;
+      font-family: inherit;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    .btn-popover:disabled { opacity: 0.5; cursor: default; }
+
+    .btn-popover-edit { background: #334155; color: #e2e8f0; }
+    .btn-popover-edit:hover:not(:disabled) { background: #475569; }
+
+    .btn-popover-delete { background: rgba(239,68,68,0.15); color: #f87171; }
+    .btn-popover-delete:hover:not(:disabled) { background: rgba(239,68,68,0.28); }
+
+    .popover-confirm { display: none; }
+    .popover-confirm.visible { display: block; }
+
+    .popover-confirm-text {
+      display: block;
+      font-size: clamp(0.72rem, 1.2vw, 0.82rem);
+      color: #94a3b8;
+      margin-bottom: 0.45rem;
+    }
+
+    .popover-confirm-btns { display: flex; gap: 0.5rem; }
+
+    .btn-popover-cancel-confirm { background: #334155; color: #e2e8f0; }
+    .btn-popover-cancel-confirm:hover:not(:disabled) { background: #475569; }
+
+    .btn-popover-confirm-delete { background: #ef4444; color: #fff; }
+    .btn-popover-confirm-delete:hover:not(:disabled) { background: #dc2626; }
+
+    .popover-recurring-note {
+      display: none;
+      font-size: clamp(0.62rem, 1vw, 0.72rem);
+      color: #475569;
+      font-style: italic;
+    }
+
     /* ── Weather strip ──────────────────────────────────────────── */
     #panel-weather {
       padding: 0.6rem 0.75rem;
@@ -861,6 +918,20 @@
         <span class="popover-notes-text" id="popover-notes-text"></span>
       </div>
     </div>
+    <div class="popover-actions" id="popover-actions">
+      <button class="btn-popover btn-popover-edit" id="popover-edit-btn">Edit</button>
+      <button class="btn-popover btn-popover-delete" id="popover-delete-btn">Delete</button>
+    </div>
+    <div class="popover-confirm" id="popover-confirm">
+      <span class="popover-confirm-text" id="popover-confirm-text">Delete this event?</span>
+      <div class="popover-confirm-btns">
+        <button class="btn-popover btn-popover-cancel-confirm" id="popover-cancel-confirm-btn">Cancel</button>
+        <button class="btn-popover btn-popover-confirm-delete" id="popover-confirm-delete-btn">Yes, Delete</button>
+      </div>
+    </div>
+    <div class="popover-recurring-note" id="popover-recurring-note">
+      Recurring events can't be edited here — use Apple Calendar.
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
@@ -873,6 +944,8 @@
     let calendarInstance = null;
     let lastFetchedAt    = null;
     let fetchError       = false;
+    let editingEventUid  = null;  // null = add mode; string UID = edit mode
+    let popoverEvent     = null;  // FC event object while popover is open
 
     // Sleep schedule (24-hr local time)
     const SLEEP_HOUR      = 0;      // display goes dark at midnight
@@ -1211,7 +1284,8 @@
       // Prevent the click from bubbling to document and immediately closing the popover
       jsEvent.stopPropagation();
 
-      const ext = fcEvent.extendedProps;
+      popoverEvent  = fcEvent;
+      const ext     = fcEvent.extendedProps;
 
       // Populate content (textContent is XSS-safe — no escaping needed)
       document.getElementById('popover-dot').style.background        = fcEvent.backgroundColor || '#8b5cf6';
@@ -1227,6 +1301,12 @@
       } else {
         notesRow.style.display = 'none';
       }
+
+      // Show Edit/Delete only for non-recurring events; show a note for recurring ones
+      const isRecurring = !!ext.isRecurring;
+      document.getElementById('popover-actions').style.display       = isRecurring ? 'none' : '';
+      document.getElementById('popover-recurring-note').style.display = isRecurring ? 'block' : 'none';
+      hideDeleteConfirm(); // reset confirm state from any previous open
 
       // Position off-screen first so we can read its rendered size
       const popover = document.getElementById('event-popover');
@@ -1255,17 +1335,19 @@
 
     function closeEventPopover() {
       document.getElementById('event-popover').classList.remove('open');
+      document.getElementById('popover-confirm').classList.remove('visible');
+      popoverEvent = null;
     }
 
     // ── Add Event Modal ───────────────────────────────────────────
-    function populateCalendarSelect() {
+    function populateCalendarSelect(selectedCalendar) {
       const select = document.getElementById('form-calendar');
       if (!calendarList.length) {
         select.innerHTML = '<option value="" disabled selected>No calendars found</option>';
         return;
       }
       select.innerHTML = calendarList
-        .map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`)
+        .map(c => `<option value="${esc(c.name)}"${c.name === selectedCalendar ? ' selected' : ''}>${esc(c.name)}</option>`)
         .join('');
     }
 
@@ -1289,8 +1371,12 @@
     }
 
     function openModal() {
+      editingEventUid = null;
+      document.getElementById('modal-title-text').textContent = 'New Event';
+      document.getElementById('form-save-btn').textContent    = 'Save Event';
+
       // Refresh calendar list in case new calendars were added
-      loadCalendarList().then(populateCalendarSelect);
+      loadCalendarList().then(() => populateCalendarSelect());
 
       // Pre-fill date to today
       document.getElementById('form-date').value = todayDateString();
@@ -1319,7 +1405,83 @@
     }
 
     function closeModal() {
+      editingEventUid = null;
       document.getElementById('modal-overlay').classList.remove('open');
+    }
+
+    // Pre-fill the modal from an existing FC event and switch to edit mode.
+    function openEditModal(fcEvent) {
+      editingEventUid = fcEvent.id;
+      document.getElementById('modal-title-text').textContent = 'Edit Event';
+      document.getElementById('form-save-btn').textContent    = 'Save Changes';
+      document.getElementById('form-error').textContent       = '';
+
+      const ext   = fcEvent.extendedProps;
+      const start = fcEvent.start; // native Date provided by FullCalendar
+
+      document.getElementById('form-title').value = fcEvent.title;
+      document.getElementById('form-notes').value = ext.notes || '';
+      document.getElementById('form-date').value  = localDateString(start);
+
+      if (fcEvent.allDay) {
+        document.getElementById('form-allday').checked = true;
+        setAllDay(true);
+      } else {
+        document.getElementById('form-allday').checked = false;
+        setAllDay(false);
+        document.getElementById('form-start').value =
+          `${String(start.getHours()).padStart(2,'0')}:${String(start.getMinutes()).padStart(2,'0')}`;
+        if (fcEvent.end) {
+          document.getElementById('form-end').value =
+            `${String(fcEvent.end.getHours()).padStart(2,'0')}:${String(fcEvent.end.getMinutes()).padStart(2,'0')}`;
+        }
+      }
+
+      // Populate calendar list then pre-select the event's calendar
+      loadCalendarList().then(() => populateCalendarSelect(ext.calendarName));
+
+      document.getElementById('modal-overlay').classList.add('open');
+      setTimeout(() => document.getElementById('form-title').focus(), 50);
+    }
+
+    // ── Delete confirm (inline within popover) ────────────────────
+    function showDeleteConfirm() {
+      document.getElementById('popover-actions').style.display = 'none';
+      document.getElementById('popover-confirm-text').textContent = 'Delete this event?';
+      document.getElementById('popover-confirm-delete-btn').textContent = 'Yes, Delete';
+      document.getElementById('popover-confirm-delete-btn').disabled = false;
+      document.getElementById('popover-confirm').classList.add('visible');
+    }
+
+    function hideDeleteConfirm() {
+      document.getElementById('popover-confirm').classList.remove('visible');
+      // Restore the actions bar only if the current event is not recurring
+      if (popoverEvent && !popoverEvent.extendedProps.isRecurring) {
+        document.getElementById('popover-actions').style.display = '';
+      }
+    }
+
+    async function handleDeleteEvent() {
+      if (!popoverEvent) return;
+      const uid              = popoverEvent.id;
+      const confirmBtn       = document.getElementById('popover-confirm-delete-btn');
+      const confirmTextEl    = document.getElementById('popover-confirm-text');
+      confirmBtn.disabled    = true;
+      confirmBtn.textContent = 'Deleting…';
+
+      try {
+        const r = await fetch(`/api/events/${encodeURIComponent(uid)}`, { method: 'DELETE' });
+        if (!r.ok) {
+          const data = await r.json().catch(() => ({}));
+          throw new Error(data.error || `Delete failed (${r.status})`);
+        }
+        closeEventPopover();
+        calendarInstance.refetchEvents();
+      } catch (err) {
+        confirmTextEl.textContent = err.message;
+        confirmBtn.disabled       = false;
+        confirmBtn.textContent    = 'Retry';
+      }
     }
 
     async function handleFormSubmit(e) {
@@ -1362,13 +1524,16 @@
         }
       }
 
-      const saveBtn = document.getElementById('form-save-btn');
+      const saveBtn   = document.getElementById('form-save-btn');
+      const isEditing = !!editingEventUid;
       saveBtn.disabled = true;
       saveBtn.textContent = 'Saving…';
 
       try {
-        const r = await fetch('/api/events', {
-          method: 'POST',
+        const url    = isEditing ? `/api/events/${encodeURIComponent(editingEventUid)}` : '/api/events';
+        const method = isEditing ? 'PUT' : 'POST';
+        const r = await fetch(url, {
+          method,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title, allDay, date, startTime, endTime, calendarName, notes }),
         });
@@ -1380,14 +1545,14 @@
         }
 
         closeModal();
-        // Server write already happened; refetch picks up the new event immediately
+        // Server write already happened; refetch picks up the change immediately
         calendarInstance.refetchEvents();
 
       } catch (err) {
         errorEl.textContent = err.message;
       } finally {
         saveBtn.disabled = false;
-        saveBtn.textContent = 'Save Event';
+        saveBtn.textContent = isEditing ? 'Save Changes' : 'Save Event';
       }
     }
 
@@ -1418,7 +1583,7 @@
       });
 
       // Preload calendar list for the modal
-      loadCalendarList().then(populateCalendarSelect);
+      loadCalendarList().then(() => populateCalendarSelect());
 
       // ── FullCalendar ──────────────────────────────────────────
       calendarInstance = new FullCalendar.Calendar(
@@ -1492,6 +1657,18 @@
         e.stopPropagation(); // don't let this reach the document click-outside listener
         closeEventPopover();
       });
+
+      // Event popover — Edit button: capture event before close nulls popoverEvent
+      document.getElementById('popover-edit-btn').addEventListener('click', () => {
+        const ev = popoverEvent;
+        closeEventPopover();
+        openEditModal(ev);
+      });
+
+      // Event popover — Delete flow
+      document.getElementById('popover-delete-btn').addEventListener('click', showDeleteConfirm);
+      document.getElementById('popover-cancel-confirm-btn').addEventListener('click', hideDeleteConfirm);
+      document.getElementById('popover-confirm-delete-btn').addEventListener('click', handleDeleteEvent);
 
       // Click outside the event popover to close it
       document.addEventListener('click', e => {

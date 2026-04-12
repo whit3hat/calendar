@@ -91,7 +91,8 @@ function loadEvents() {
             color,
             extendedProps: {
               calendarName,
-              notes: component.description || '',
+              notes:       component.description || '',
+              isRecurring: !!component.rrule,
             },
           });
         }
@@ -102,6 +103,91 @@ function loadEvents() {
   }
 
   return events;
+}
+
+// Scan all calendar subdirectories for a VEVENT whose UID matches.
+// Returns { filePath, calendarName, component } or null.
+function findEventFile(uid) {
+  if (!fs.existsSync(CALENDAR_DIR)) return null;
+
+  let entries;
+  try { entries = fs.readdirSync(CALENDAR_DIR, { withFileTypes: true }); }
+  catch { return null; }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const calendarPath = path.join(CALENDAR_DIR, entry.name);
+
+    let files;
+    try { files = fs.readdirSync(calendarPath).filter(f => f.endsWith('.ics')); }
+    catch { continue; }
+
+    for (const file of files) {
+      const filePath = path.join(calendarPath, file);
+      try {
+        const parsed = ical.sync.parseFile(filePath);
+        for (const component of Object.values(parsed)) {
+          if (component.type === 'VEVENT' && component.uid === uid) {
+            return { filePath, calendarName: entry.name, component };
+          }
+        }
+      } catch { /* skip unparseable files */ }
+    }
+  }
+  return null;
+}
+
+// Unfold RFC 5545 folded lines and return the VEVENT properties that
+// this app does NOT manage — e.g. VALARM blocks, X-APPLE-* fields,
+// ORGANIZER, attendees — so they survive an edit without being lost.
+function extractPreservedVEventLines(rawContent) {
+  const MANAGED = new Set([
+    'UID', 'DTSTAMP', 'DTSTART', 'DTEND', 'SUMMARY', 'DESCRIPTION', 'SEQUENCE',
+  ]);
+
+  // Unfold: continuation lines start with SP or HT (RFC 5545 §3.1)
+  const physLines = rawContent.replace(/\r\n/g, '\n').split('\n');
+  const logical   = [];
+  for (const line of physLines) {
+    if ((line.startsWith(' ') || line.startsWith('\t')) && logical.length > 0) {
+      logical[logical.length - 1] += line.slice(1);
+    } else {
+      logical.push(line);
+    }
+  }
+
+  const preserved = [];
+  let inVEvent = false;
+  let depth    = 0; // nesting depth for sub-components like VALARM
+
+  for (const line of logical) {
+    if (!inVEvent) {
+      if (line === 'BEGIN:VEVENT') inVEvent = true;
+      continue;
+    }
+
+    if (line === 'END:VEVENT' && depth === 0) { inVEvent = false; continue; }
+
+    // Inside a nested sub-component (VALARM etc.) — preserve everything
+    if (depth > 0) {
+      preserved.push(line);
+      if (line.startsWith('END:')) depth--;
+      continue;
+    }
+
+    // Start of a nested sub-component
+    if (line.startsWith('BEGIN:')) {
+      depth++;
+      preserved.push(line);
+      continue;
+    }
+
+    // Top-level VEVENT property — preserve if not managed
+    const propName = line.split(/[:;]/)[0].toUpperCase();
+    if (!MANAGED.has(propName)) preserved.push(line);
+  }
+
+  return preserved;
 }
 
 // ── ICS generation ─────────────────────────────────────────────
@@ -363,6 +449,144 @@ app.post('/api/events', (req, res) => {
       notes: (notes || '').trim(),
     },
   });
+});
+
+// PUT /api/events/:uid
+// Updates an existing event in place (or moves it to a new calendar).
+// Preserves any ICS properties the app does not manage (VALARM, X-APPLE-*, etc.).
+// Increments SEQUENCE so iCloud accepts the update as a newer version.
+app.put('/api/events/:uid', (req, res) => {
+  const uid = req.params.uid;
+  const { title, allDay, date, startTime, endTime, calendarName, notes } = req.body;
+
+  // ── Input validation ──────────────────────────────────────────
+  if (!title || !title.trim())
+    return res.status(400).json({ error: 'Title is required' });
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+    return res.status(400).json({ error: 'A valid date (YYYY-MM-DD) is required' });
+  if (!calendarName)
+    return res.status(400).json({ error: 'Calendar is required' });
+
+  if (!allDay) {
+    if (!startTime || !/^\d{2}:\d{2}$/.test(startTime))
+      return res.status(400).json({ error: 'A valid start time (HH:MM) is required' });
+    if (!endTime || !/^\d{2}:\d{2}$/.test(endTime))
+      return res.status(400).json({ error: 'A valid end time (HH:MM) is required' });
+    const [sh, sm] = startTime.split(':').map(Number);
+    const [eh, em] = endTime.split(':').map(Number);
+    if (sh * 60 + sm >= eh * 60 + em)
+      return res.status(400).json({ error: 'End time must be after start time' });
+  }
+
+  // ── Locate the existing event ─────────────────────────────────
+  const found = findEventFile(uid);
+  if (!found) return res.status(404).json({ error: 'Event not found' });
+  if (found.component.rrule) {
+    return res.status(422).json({
+      error: 'Recurring events cannot be edited here — use Apple Calendar',
+    });
+  }
+
+  // ── Validate target calendar (directory traversal guard) ──────
+  const targetCalPath = path.join(CALENDAR_DIR, path.basename(calendarName));
+  if (!fs.existsSync(targetCalPath) || !fs.statSync(targetCalPath).isDirectory()) {
+    return res.status(400).json({ error: `Calendar "${calendarName}" not found` });
+  }
+
+  // ── Build updated ICS ─────────────────────────────────────────
+  const rawContent  = fs.readFileSync(found.filePath, 'utf8');
+  const preserved   = extractPreservedVEventLines(rawContent);
+  const sequence    = (parseInt(found.component.sequence || '0', 10) || 0) + 1;
+  const dtstamp     = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+
+  let dtstart, dtend;
+  if (allDay) {
+    dtstart = `DTSTART;VALUE=DATE:${date.replace(/-/g, '')}`;
+    dtend   = `DTEND;VALUE=DATE:${nextDay(date).replace(/-/g, '')}`;
+  } else {
+    dtstart = `DTSTART:${date.replace(/-/g, '')}T${startTime.replace(':', '')}00`;
+    dtend   = `DTEND:${date.replace(/-/g, '')}T${endTime.replace(':', '')}00`;
+  }
+
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Family Calendar//EN',
+    'CALSCALE:GREGORIAN',
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${dtstamp}`,
+    `SEQUENCE:${sequence}`,
+    dtstart,
+    dtend,
+    foldLine(`SUMMARY:${escapeICS(title.trim())}`),
+  ];
+  if (notes && notes.trim()) {
+    lines.push(foldLine(`DESCRIPTION:${escapeICS(notes.trim())}`));
+  }
+  // Re-fold preserved lines (they were unfolded during extraction)
+  for (const line of preserved) {
+    lines.push(foldLine(line));
+  }
+  lines.push('END:VEVENT', 'END:VCALENDAR');
+  const icsContent = lines.join('\r\n') + '\r\n';
+
+  // ── Write (move to new calendar directory if needed) ──────────
+  // Keep the same filename; only the directory changes on a calendar move.
+  const newFilePath = path.join(targetCalPath, path.basename(found.filePath));
+  try {
+    if (found.filePath !== newFilePath) {
+      // Write first so we never lose the event if unlink fails
+      fs.writeFileSync(newFilePath, icsContent, 'utf8');
+      fs.unlinkSync(found.filePath);
+    } else {
+      fs.writeFileSync(found.filePath, icsContent, 'utf8');
+    }
+  } catch (err) {
+    console.error('Failed to update event:', err);
+    return res.status(500).json({ error: 'Failed to update event' });
+  }
+
+  // ── Return updated event in FullCalendar format ───────────────
+  const color   = calendarColor(calendarName);
+  const endDate = allDay ? nextDay(date) : null;
+  res.json({
+    id:     uid,
+    title:  title.trim(),
+    start:  allDay ? date : `${date}T${startTime}:00`,
+    end:    allDay ? endDate : `${date}T${endTime}:00`,
+    allDay: !!allDay,
+    color,
+    extendedProps: {
+      calendarName,
+      notes:       (notes || '').trim(),
+      isRecurring: false,
+    },
+  });
+});
+
+// DELETE /api/events/:uid
+// Deletes the .ics file for a non-recurring event.
+// vdirsyncer detects the deletion and removes it from iCloud on its next run.
+app.delete('/api/events/:uid', (req, res) => {
+  const uid = req.params.uid;
+
+  const found = findEventFile(uid);
+  if (!found) return res.status(404).json({ error: 'Event not found' });
+  if (found.component.rrule) {
+    return res.status(422).json({
+      error: 'Recurring events cannot be deleted here — use Apple Calendar',
+    });
+  }
+
+  try {
+    fs.unlinkSync(found.filePath);
+  } catch (err) {
+    console.error('Failed to delete event:', err);
+    return res.status(500).json({ error: 'Failed to delete event' });
+  }
+
+  res.status(204).send();
 });
 
 app.listen(PORT, () => {
