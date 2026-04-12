@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A physical wall-mounted family calendar with a touchscreen display, running on a Raspberry Pi. Syncs bidirectionally with Apple Calendar (iCloud) so family members can add and view events from their iPhones or directly on the wall display.
 
-**Current status: All five build phases are complete.** Hardware is on order. Next step is deploying to the Pi when it arrives.
+**Current status: Phases 1–5 complete. Phase 6 (event editing) is in active development.**  Hardware is on order. Next step is deploying to the Pi when it arrives.
 
 ## Repository Structure
 
@@ -137,9 +137,31 @@ A Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
 - WMO code → emoji/label lookup via `WMO_CODES` map (covers all 30 standard WMO interpretation codes); unmapped codes fall back to `🌡️ Unknown`
 - Forecast date strings parsed as `'T12:00:00'` (local noon) to prevent UTC-midnight timezone shifts on day-of-week label
 
+### Phase 6 — Event Editing & Deletion 🚧 In Development
+Extends the existing event popover with Edit and Delete actions for non-recurring events. Recurring events are intentionally out of scope (RRULE/EXDATE/RECURRENCE-ID handling is complex; they will show a "can't edit recurring events" message).
+
+**Backend**
+- `PUT /api/events/:uid` — locate the event's `.ics` file by scanning CALENDAR_DIR subdirectories, parse it with node-ical, overwrite only the edited fields (title, date, time, calendar, notes), increment the `SEQUENCE` counter, rewrite the file. vdirsyncer picks up the change on its next run and pushes to iCloud.
+- `DELETE /api/events/:uid` — find and delete the `.ics` file. vdirsyncer detects the deletion and removes the event from iCloud.
+- Both endpoints must validate that the resolved file path stays within CALENDAR_DIR (directory traversal guard, same pattern as `POST /api/events`).
+- Recurring events are detected by the presence of an `RRULE` property in the parsed component; return 422 with a clear message if found.
+
+**Frontend**
+- "Edit" button in the event detail popover opens the existing Add Event modal pre-filled with the event's current data; on save it calls `PUT` instead of `POST`.
+- "Delete" button in the popover shows a confirmation prompt ("Delete this event?"), then calls `DELETE` and removes the event from the FullCalendar instance immediately.
+- After a successful edit or delete, call `calendarInstance.refetchEvents()` to sync the grid.
+- Non-recurring events only — if the event has an `isRecurring` flag (set by the server), the Edit and Delete buttons are replaced with a note: "Recurring events can't be edited here — use Apple Calendar."
+
+**Key implementation notes**
+- The UID used in the API route comes from `fcEvent.id` on the FullCalendar event object (set from `component.uid` in `loadEvents()`).
+- File lookup: iterate subdirs of CALENDAR_DIR, parse each `.ics`, match on `component.uid`. Cache the uid→filepath mapping if performance matters (unlikely with typical calendar sizes).
+- Preserve unknown ICS properties when editing — parse the raw file, replace only the known fields, write the rest back unchanged. This avoids stripping iCloud-specific extensions (X-APPLE-*, VALARM, etc.).
+- `SEQUENCE` must be incremented on every edit so iCloud accepts the update as a newer version.
+- The `extendedProps.isRecurring` flag should be set in `loadEvents()` on the server by checking `!!component.rrule`.
+
 ## What We Are NOT Building
 - User login / authentication
-- Editing or deleting existing events from the Pi (create only)
+- Editing or deleting recurring events from the Pi
 - Push notifications
 - Week or day view
 - Multi-Pi sync

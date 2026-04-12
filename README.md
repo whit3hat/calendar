@@ -10,7 +10,7 @@ No subscriptions. No new apps for your family. No cloud middlemen. Just a Pi on 
 
 - 🗓️ **Displays your family's iCloud calendars** on a beautiful dark-themed full-month grid
 - ➕ **Create new events from the touchscreen** — they appear on everyone's iPhone within 5 minutes
-- 👆 **Tap any event** to see a read-only detail popover (title, calendar, time, notes)
+- 👆 **Tap any event** to see details — and soon, **edit or delete it** right from the wall
 - 📋 **Day panel** slides out from the right showing the selected day broken into hourly slots with a live "now" line
 - 🌤️ **Live weather** in the day panel — current conditions, today's high/low, and a 4-day forecast (no API key needed)
 - 🌙 **Auto-sleeps at midnight** and wakes at 6 AM — touch the screen at night to temporarily wake it
@@ -321,7 +321,7 @@ Check that the Pi's own DPMS (Display Power Management) isn't overriding the sof
 
 ## 🗺️ Roadmap
 
-All five planned phases are complete and running in production:
+Five phases are complete and running in production. Phase 6 is in active development:
 
 | Phase | Feature | Status |
 |-------|---------|--------|
@@ -330,10 +330,19 @@ All five planned phases are complete and running in production:
 | 3 | Event creation from touchscreen | ✅ Done |
 | 4 | Event detail popover, sleep/wake, offline state | ✅ Done |
 | 5 | Live weather widget in day panel | ✅ Done |
+| 6 | Edit and delete events from the Pi | 🚧 In Progress |
+
+### Phase 6 — Event Editing & Deletion
+
+Tapping an event will soon show **Edit** and **Delete** buttons alongside the read-only details. Changes sync back to iCloud within 5 minutes via vdirsyncer — same as event creation.
+
+**Scope:**
+- ✅ Edit title, date, time, calendar, and notes on any standard event
+- ✅ Delete any standard event with a single tap + confirmation
+- ⏭️ **Recurring events are read-only** — editing "just this occurrence" vs "all occurrences" is genuinely complex and best done in Apple Calendar where you can make that choice. The Pi will show a friendly note instead of pretending it can handle it.
 
 Future ideas (not currently planned):
 - 🔔 Upcoming events ticker at the bottom of the screen
-- 🗑️ Delete/edit events from the Pi (currently create-only)
 - 🕶️ Light theme option
 
 ---
