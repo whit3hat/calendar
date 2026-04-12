@@ -15,6 +15,15 @@ const CALENDAR_DIR = process.env.CALENDAR_DIR
   ? path.resolve(process.env.CALENDAR_DIR)
   : path.join(os.homedir(), '.local', 'share', 'calendar');
 
+// Weather config — lat/lon default to Liberty, MO; units default to fahrenheit.
+// Override with WEATHER_LAT, WEATHER_LON, WEATHER_UNITS env vars.
+const WEATHER_LAT   = process.env.WEATHER_LAT   ? parseFloat(process.env.WEATHER_LAT)   : 39.3392;
+const WEATHER_LON   = process.env.WEATHER_LON   ? parseFloat(process.env.WEATHER_LON)   : -94.2261;
+const WEATHER_UNITS = (process.env.WEATHER_UNITS || 'fahrenheit').toLowerCase();
+
+const weatherCache = { data: null, fetchedAt: 0 };
+const WEATHER_CACHE_MS = 15 * 60 * 1000; // 15 minutes
+
 // Colors assigned to calendars by folder name (case-insensitive).
 const CALENDAR_COLORS = {
   family:   '#3b82f6',  // blue
@@ -222,6 +231,58 @@ app.get('/api/calendars', (req, res) => {
   } catch (err) {
     console.error('Error reading calendar list:', err);
     res.status(500).json({ error: 'Failed to read calendars' });
+  }
+});
+
+// GET /api/weather
+// Proxies Open-Meteo with a 15-minute server-side cache so the Pi never hammers
+// the external API and the client never leaks the lat/lon to the browser.
+app.get('/api/weather', async (req, res) => {
+  if (weatherCache.data && Date.now() - weatherCache.fetchedAt < WEATHER_CACHE_MS) {
+    return res.json(weatherCache.data);
+  }
+
+  try {
+    const unit = WEATHER_UNITS === 'celsius' ? 'celsius' : 'fahrenheit';
+    const url = `https://api.open-meteo.com/v1/forecast` +
+      `?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}` +
+      `&current=temperature_2m,weathercode` +
+      `&daily=weathercode,temperature_2m_max,temperature_2m_min` +
+      `&temperature_unit=${unit}` +
+      `&timezone=auto` +
+      `&forecast_days=5`;
+
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Open-Meteo HTTP ${response.status}`);
+    const json = await response.json();
+
+    const daily = json.daily;
+    const result = {
+      enabled: true,
+      current: {
+        temp: Math.round(json.current.temperature_2m),
+        code: json.current.weathercode,
+      },
+      today: {
+        high: Math.round(daily.temperature_2m_max[0]),
+        low:  Math.round(daily.temperature_2m_min[0]),
+      },
+      // index 0 = today; slice 1–4 = next 4 days
+      forecast: daily.time.slice(1, 5).map((date, i) => ({
+        date,
+        code: daily.weathercode[i + 1],
+        high: Math.round(daily.temperature_2m_max[i + 1]),
+      })),
+      units: unit === 'celsius' ? 'C' : 'F',
+    };
+
+    weatherCache.data      = result;
+    weatherCache.fetchedAt = Date.now();
+    res.json(result);
+  } catch (err) {
+    console.error('Weather fetch failed:', err.message);
+    if (weatherCache.data) return res.json(weatherCache.data); // serve stale on error
+    res.status(503).json({ error: 'Weather unavailable' });
   }
 });
 

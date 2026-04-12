@@ -664,6 +664,75 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+
+    /* ── Weather strip ──────────────────────────────────────────── */
+    #panel-weather {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid #334155;
+      flex-shrink: 0;
+      display: none;
+    }
+
+    #panel-weather.has-data { display: block; }
+
+    .weather-current {
+      display: flex;
+      align-items: baseline;
+      gap: 0.45rem;
+      margin-bottom: 0.2rem;
+      flex-wrap: wrap;
+    }
+
+    .weather-icon { font-size: clamp(1rem, 1.8vw, 1.25rem); }
+
+    .weather-temp {
+      font-size: clamp(1.1rem, 2.2vw, 1.45rem);
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .weather-desc {
+      font-size: clamp(0.62rem, 1vw, 0.75rem);
+      color: #94a3b8;
+    }
+
+    .weather-hilo {
+      font-size: clamp(0.58rem, 0.95vw, 0.7rem);
+      color: #64748b;
+      margin-bottom: 0.45rem;
+    }
+
+    .weather-forecast {
+      display: flex;
+      gap: 0.35rem;
+    }
+
+    .weather-day {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.12rem;
+      background: #0f172a;
+      border-radius: 6px;
+      padding: 0.28rem 0.2rem;
+    }
+
+    .weather-day-name {
+      font-size: clamp(0.52rem, 0.85vw, 0.62rem);
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .weather-day-icon { font-size: clamp(0.85rem, 1.4vw, 1rem); }
+
+    .weather-day-high {
+      font-size: clamp(0.58rem, 0.95vw, 0.7rem);
+      font-weight: 600;
+      color: #cbd5e1;
+    }
   </style>
 </head>
 <body>
@@ -679,6 +748,15 @@
           <div class="panel-header">
             <div class="panel-date" id="panel-date-label"></div>
             <button class="panel-close" id="panel-close-btn" aria-label="Close panel">&#x2715;</button>
+          </div>
+          <div id="panel-weather">
+            <div class="weather-current">
+              <span class="weather-icon" id="weather-icon"></span>
+              <span class="weather-temp" id="weather-temp"></span>
+              <span class="weather-desc" id="weather-desc"></span>
+            </div>
+            <div class="weather-hilo" id="weather-hilo"></div>
+            <div class="weather-forecast" id="weather-forecast"></div>
           </div>
           <div class="panel-allday" id="panel-allday"></div>
           <div class="panel-timeline" id="panel-timeline"></div>
@@ -855,6 +933,73 @@
         return ev.start <= dateStr && end > dateStr;
       }
       return localDateString(new Date(ev.start)) === dateStr;
+    }
+
+    // ── Weather ───────────────────────────────────────────────────
+    // WMO weather interpretation codes → emoji + label
+    const WMO_CODES = {
+       0: { icon: '☀️',  label: 'Clear' },
+       1: { icon: '🌤️', label: 'Mainly Clear' },
+       2: { icon: '⛅',  label: 'Partly Cloudy' },
+       3: { icon: '☁️',  label: 'Overcast' },
+      45: { icon: '🌫️', label: 'Foggy' },
+      48: { icon: '🌫️', label: 'Foggy' },
+      51: { icon: '🌦️', label: 'Light Drizzle' },
+      53: { icon: '🌦️', label: 'Drizzle' },
+      55: { icon: '🌦️', label: 'Heavy Drizzle' },
+      61: { icon: '🌧️', label: 'Light Rain' },
+      63: { icon: '🌧️', label: 'Rain' },
+      65: { icon: '🌧️', label: 'Heavy Rain' },
+      71: { icon: '🌨️', label: 'Light Snow' },
+      73: { icon: '🌨️', label: 'Snow' },
+      75: { icon: '🌨️', label: 'Heavy Snow' },
+      77: { icon: '🌨️', label: 'Snow Grains' },
+      80: { icon: '🌧️', label: 'Rain Showers' },
+      81: { icon: '🌧️', label: 'Rain Showers' },
+      82: { icon: '🌧️', label: 'Heavy Showers' },
+      85: { icon: '🌨️', label: 'Snow Showers' },
+      86: { icon: '🌨️', label: 'Heavy Snow Showers' },
+      95: { icon: '⛈️',  label: 'Thunderstorm' },
+      96: { icon: '⛈️',  label: 'Thunderstorm' },
+      99: { icon: '⛈️',  label: 'Thunderstorm' },
+    };
+
+    function wmoInfo(code) {
+      return WMO_CODES[code] || { icon: '🌡️', label: 'Unknown' };
+    }
+
+    const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    async function loadWeather() {
+      try {
+        const r = await fetch('/api/weather');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const w = await r.json();
+        if (!w.enabled) return;
+
+        const { icon, label } = wmoInfo(w.current.code);
+
+        document.getElementById('weather-icon').textContent = icon;
+        document.getElementById('weather-temp').textContent = `${w.current.temp}°${w.units}`;
+        document.getElementById('weather-desc').textContent = label;
+        document.getElementById('weather-hilo').textContent =
+          `↑ ${w.today.high}°  ↓ ${w.today.low}°`;
+
+        document.getElementById('weather-forecast').innerHTML = w.forecast.map(day => {
+          // Parse as local noon to avoid any UTC-midnight timezone shift on the day name
+          const date = new Date(day.date + 'T12:00:00');
+          const { icon: dayIcon } = wmoInfo(day.code);
+          return `<div class="weather-day">` +
+            `<span class="weather-day-name">${DAY_ABBR[date.getDay()]}</span>` +
+            `<span class="weather-day-icon">${dayIcon}</span>` +
+            `<span class="weather-day-high">${day.high}°</span>` +
+            `</div>`;
+        }).join('');
+
+        document.getElementById('panel-weather').classList.add('has-data');
+      } catch (err) {
+        console.error('Weather load failed:', err);
+      }
     }
 
     // ── Status bar ────────────────────────────────────────────────
@@ -1361,6 +1506,10 @@
 
       setInterval(() => calendarInstance.refetchEvents(), 60000);
       setInterval(updateStatus, 30000);
+
+      // Weather — load now and refresh every 15 minutes
+      loadWeather();
+      setInterval(loadWeather, 15 * 60 * 1000);
 
       // Sleep schedule — check now and then every minute
       checkSleepSchedule();
