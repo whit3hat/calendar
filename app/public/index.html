@@ -34,7 +34,7 @@
     #calendar-container {
       flex: 1;
       min-height: 0;
-      min-width: 0; /* allow flex child to shrink below content width */
+      min-width: 0;
     }
 
     #calendar {
@@ -53,7 +53,6 @@
       width: 28vw;
     }
 
-    /* Fixed-width inner wrapper — gets clipped by parent overflow:hidden */
     .panel-inner {
       width: 28vw;
       height: 100%;
@@ -92,22 +91,16 @@
       transition: background 0.15s, color 0.15s;
     }
 
-    .panel-close:hover {
-      background: #334155;
-      color: #e2e8f0;
-    }
+    .panel-close:hover { background: #334155; color: #e2e8f0; }
 
-    /* All-day events strip */
     .panel-allday {
       padding: 0.5rem 0.75rem;
       border-bottom: 1px solid #334155;
       flex-shrink: 0;
-      display: none; /* hidden when empty */
+      display: none;
     }
 
-    .panel-allday.has-events {
-      display: block;
-    }
+    .panel-allday.has-events { display: block; }
 
     .panel-allday-label {
       font-size: 0.65rem;
@@ -118,7 +111,6 @@
       margin-bottom: 0.35rem;
     }
 
-    /* Scrollable timeline */
     .panel-timeline {
       flex: 1;
       overflow-y: auto;
@@ -141,9 +133,7 @@
       position: relative;
     }
 
-    .hour-slot.current-hour {
-      background: rgba(59, 130, 246, 0.05);
-    }
+    .hour-slot.current-hour { background: rgba(59, 130, 246, 0.05); }
 
     .hour-label {
       flex-shrink: 0;
@@ -163,7 +153,6 @@
       gap: 0.2rem;
     }
 
-    /* Now indicator — red line at current time */
     .now-line {
       position: absolute;
       left: 0;
@@ -185,7 +174,6 @@
       border-radius: 50%;
     }
 
-    /* Event chips in panel */
     .panel-event {
       border-radius: 5px;
       padding: 0.25rem 0.5rem;
@@ -262,16 +250,25 @@
       transition: background 0.15s !important;
     }
 
-    /* Highlight the Today button when panel is open */
+    /* Add Event button — blue to stand out */
+    .fc-addEvent-button {
+      background: #3b82f6 !important;
+      border-color: #3b82f6 !important;
+      font-weight: 600 !important;
+    }
+
+    .fc-addEvent-button:hover {
+      background: #2563eb !important;
+      border-color: #2563eb !important;
+    }
+
+    /* Today button active state when panel is open */
     .fc-todayPanel-button.panel-active {
       background-color: #3b82f6 !important;
       border-color: #3b82f6 !important;
     }
 
-    .fc-button:focus {
-      box-shadow: none !important;
-      outline: none !important;
-    }
+    .fc-button:focus { box-shadow: none !important; outline: none !important; }
 
     .fc-col-header-cell {
       background: #1e293b !important;
@@ -292,11 +289,10 @@
     .fc-daygrid-day {
       background: transparent !important;
       border-color: #1e293b !important;
+      cursor: pointer;
     }
 
-    .fc-daygrid-day-frame {
-      min-height: 0 !important;
-    }
+    .fc-daygrid-day-frame { min-height: 0 !important; }
 
     .fc-daygrid-day-number {
       color: #94a3b8 !important;
@@ -325,9 +321,7 @@
       margin: 0.2rem;
     }
 
-    .fc-day-other .fc-daygrid-day-number {
-      color: #334155 !important;
-    }
+    .fc-day-other .fc-daygrid-day-number { color: #334155 !important; }
 
     .fc-event {
       border-radius: 4px !important;
@@ -354,13 +348,219 @@
 
     .fc-scrollgrid,
     .fc-scrollgrid td,
-    .fc-scrollgrid th {
-      border-color: #1e293b !important;
+    .fc-scrollgrid th { border-color: #1e293b !important; }
+
+    .fc-scroller { overflow: hidden !important; }
+
+    /* ── Add Event Modal ──────────────────────────────────────── */
+    #modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      z-index: 300;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
     }
 
-    .fc-scroller {
-      overflow: hidden !important;
+    #modal-overlay.open { display: flex; }
+
+    #modal-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 1.5rem;
+      width: min(92vw, 480px);
+      max-height: 90vh;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #334155 transparent;
     }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+
+    .modal-title {
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: #64748b;
+      font-size: 1.4rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      border-radius: 6px;
+      touch-action: manipulation;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .modal-close:hover { background: #334155; color: #e2e8f0; }
+
+    .form-group { margin-bottom: 1rem; }
+
+    .form-label {
+      display: block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-bottom: 0.4rem;
+    }
+
+    .form-input,
+    .form-select,
+    .form-textarea {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #f1f5f9;
+      font-size: clamp(0.9rem, 1.6vw, 1rem);
+      padding: 0.6rem 0.75rem;
+      outline: none;
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+
+    .form-input:focus,
+    .form-select:focus,
+    .form-textarea:focus { border-color: #3b82f6; }
+
+    .form-textarea {
+      resize: none;
+      height: 4rem;
+    }
+
+    /* Custom select arrow */
+    .form-select {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.75rem center;
+      padding-right: 2.25rem;
+      cursor: pointer;
+    }
+
+    /* date and time inputs — remove browser chrome color inconsistencies */
+    .form-input[type="date"],
+    .form-input[type="time"] {
+      color-scheme: dark;
+    }
+
+    /* All-day toggle */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin: 0.25rem 0 0.75rem;
+    }
+
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      cursor: pointer;
+      user-select: none;
+      font-size: clamp(0.85rem, 1.5vw, 0.95rem);
+      color: #cbd5e1;
+    }
+
+    .toggle {
+      position: relative;
+      width: 2.75rem;
+      height: 1.5rem;
+      flex-shrink: 0;
+    }
+
+    .toggle input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: #334155;
+      border-radius: 999px;
+      transition: background 0.2s;
+      cursor: pointer;
+    }
+
+    .toggle input:checked + .toggle-track { background: #3b82f6; }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 0.2rem;
+      left: 0.2rem;
+      width: 1.1rem;
+      height: 1.1rem;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+      pointer-events: none;
+    }
+
+    .toggle input:checked + .toggle-track .toggle-thumb {
+      transform: translateX(1.25rem);
+    }
+
+    /* Time fields — shown only when all-day is off */
+    #time-fields {
+      display: none;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+
+    #time-fields.visible { display: grid; }
+
+    /* Form error */
+    #form-error {
+      color: #f87171;
+      font-size: 0.8rem;
+      min-height: 1.2em;
+      margin-bottom: 0.5rem;
+    }
+
+    /* Modal footer buttons */
+    .modal-footer {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: flex-end;
+      margin-top: 1.25rem;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 8px;
+      font-size: clamp(0.85rem, 1.5vw, 0.95rem);
+      font-weight: 600;
+      padding: 0.65rem 1.3rem;
+      cursor: pointer;
+      touch-action: manipulation;
+      font-family: inherit;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    .btn:disabled { opacity: 0.5; cursor: default; }
+
+    .btn-cancel { background: #334155; color: #e2e8f0; }
+    .btn-cancel:hover:not(:disabled) { background: #475569; }
+
+    .btn-save { background: #3b82f6; color: #fff; }
+    .btn-save:hover:not(:disabled) { background: #2563eb; }
   </style>
 </head>
 <body>
@@ -386,16 +586,96 @@
     <div id="status-bar">Loading calendars…</div>
   </div>
 
+  <!-- Add Event Modal -->
+  <div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title-text">
+    <div id="modal-card">
+      <div class="modal-header">
+        <span class="modal-title" id="modal-title-text">New Event</span>
+        <button class="modal-close" id="modal-close-btn" aria-label="Cancel">&#x2715;</button>
+      </div>
+
+      <form id="event-form" novalidate>
+
+        <div class="form-group">
+          <label class="form-label" for="form-title">Title</label>
+          <input id="form-title" class="form-input" type="text"
+                 placeholder="Event name" autocomplete="off" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="form-calendar">Calendar</label>
+          <select id="form-calendar" class="form-select">
+            <option value="" disabled>Loading…</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="form-date">Date</label>
+          <input id="form-date" class="form-input" type="date" required>
+        </div>
+
+        <div class="toggle-row">
+          <label class="toggle-label" for="form-allday">
+            <span class="toggle">
+              <input id="form-allday" type="checkbox" checked>
+              <span class="toggle-track">
+                <span class="toggle-thumb"></span>
+              </span>
+            </span>
+            All Day
+          </label>
+        </div>
+
+        <div id="time-fields">
+          <div class="form-group">
+            <label class="form-label" for="form-start">Start</label>
+            <input id="form-start" class="form-input" type="time">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="form-end">End</label>
+            <input id="form-end" class="form-input" type="time">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="form-notes">Notes</label>
+          <textarea id="form-notes" class="form-textarea"
+                    placeholder="Optional notes"></textarea>
+        </div>
+
+        <div id="form-error" role="alert"></div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-cancel" id="modal-cancel-btn">Cancel</button>
+          <button type="submit" class="btn btn-save" id="form-save-btn">Save Event</button>
+        </div>
+
+      </form>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
   <script>
     // ── State ─────────────────────────────────────────────────────
-    let allEvents = [];      // latest fetched events from /api/events
-    let panelOpen = false;
+    let allEvents    = [];
+    let calendarList = [];
+    let panelOpen    = false;
+    let panelDate    = null;  // null = today; 'YYYY-MM-DD' for a specific day
     let calendarInstance = null;
-    let lastFetchedAt = null;
-    let fetchError = false;
+    let lastFetchedAt    = null;
+    let fetchError       = false;
 
-    // ── Helpers ───────────────────────────────────────────────────
+    // ── HTML escaping ─────────────────────────────────────────────
+    function esc(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // ── Date/time helpers ─────────────────────────────────────────
     const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const MONTHS = ['January','February','March','April','May','June','July',
                     'August','September','October','November','December'];
@@ -425,14 +705,19 @@
       return `${h - 12} PM`;
     }
 
-    // Returns true if the event falls on today (local time)
-    function isToday(ev) {
-      const today = todayDateString();
+    function isOnDate(ev, dateStr) {
       if (ev.allDay) {
-        // all-day end is exclusive (next day), start is YYYY-MM-DD
-        return ev.start <= today && (!ev.end || ev.end > today);
+        // When DTEND is absent (some CalDAV servers omit it for single-day events),
+        // treat the event as lasting exactly one day so it doesn't match all future dates.
+        let end = ev.end;
+        if (!end) {
+          const [y, m, d] = ev.start.split('-').map(Number);
+          const next = new Date(y, m - 1, d + 1);
+          end = `${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,'0')}-${String(next.getDate()).padStart(2,'0')}`;
+        }
+        return ev.start <= dateStr && end > dateStr;
       }
-      return localDateString(new Date(ev.start)) === today;
+      return localDateString(new Date(ev.start)) === dateStr;
     }
 
     // ── Status bar ────────────────────────────────────────────────
@@ -454,56 +739,58 @@
 
     // ── Day panel ─────────────────────────────────────────────────
     function renderPanel() {
-      const now = new Date();
-      const todayEvents = allEvents.filter(isToday);
+      const dateStr = panelDate || todayDateString();
+      const [y, mo, d] = dateStr.split('-').map(Number);
+      const date = new Date(y, mo - 1, d);
+      const isShowingToday = dateStr === todayDateString();
 
-      // Header date label
+      const eventsForDate = allEvents.filter(ev => isOnDate(ev, dateStr));
+
       document.getElementById('panel-date-label').textContent =
-        `${DAYS[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}`;
+        `${DAYS[date.getDay()]}, ${MONTHS[date.getMonth()]} ${date.getDate()}`;
+
+      // Keep the Today button highlighted only when actually showing today
+      const todayBtn = document.querySelector('.fc-todayPanel-button');
+      if (todayBtn) todayBtn.classList.toggle('panel-active', isShowingToday);
 
       // All-day section
       const alldayEl = document.getElementById('panel-allday');
-      const alldayEvents = todayEvents.filter(ev => ev.allDay);
+      const alldayEvents = eventsForDate.filter(ev => ev.allDay);
       if (alldayEvents.length) {
         alldayEl.classList.add('has-events');
         alldayEl.innerHTML = `<div class="panel-allday-label">All Day</div>` +
           alldayEvents.map(ev => `
             <div class="panel-event" style="background:${ev.color};color:#fff;margin-bottom:0.2rem">
-              <div class="panel-event-title">${ev.title}</div>
+              <div class="panel-event-title">${esc(ev.title)}</div>
             </div>`).join('');
       } else {
         alldayEl.classList.remove('has-events');
         alldayEl.innerHTML = '';
       }
 
-      // Timeline
-      const timedEvents = todayEvents.filter(ev => !ev.allDay);
-      const timeline = document.getElementById('panel-timeline');
-
-      // Build a map: hour → events starting in that hour
+      // Build hour → events map
+      const timedEvents = eventsForDate.filter(ev => !ev.allDay);
       const byHour = {};
       for (const ev of timedEvents) {
         const h = new Date(ev.start).getHours();
         (byHour[h] = byHour[h] || []).push(ev);
       }
 
+      const now = new Date();
       const currentHour = now.getHours();
       const currentMin  = now.getMinutes();
 
       let html = '';
       for (let h = 0; h < 24; h++) {
-        const isCurrent = h === currentHour;
+        const isCurrent  = isShowingToday && h === currentHour;
         const eventsHere = byHour[h] || [];
 
-        // Now-indicator position within this hour slot (% of slot height)
-        const nowLineStyle = isCurrent
-          ? `top: calc(${(currentMin / 60) * 100}%)`
-          : '';
-
         html += `<div class="hour-slot${isCurrent ? ' current-hour' : ''}" data-hour="${h}">`;
-        if (isCurrent) html += `<div class="now-line" style="${nowLineStyle}"></div>`;
-        html += `<div class="hour-label">${hourLabel(h)}</div>`;
-        html += `<div class="hour-events">`;
+        if (isCurrent) {
+          const pct = (currentMin / 60) * 100;
+          html += `<div class="now-line" style="top:${pct}%"></div>`;
+        }
+        html += `<div class="hour-label">${hourLabel(h)}</div><div class="hour-events">`;
 
         for (const ev of eventsHere) {
           const timeRange = ev.end
@@ -511,32 +798,38 @@
             : formatTime(ev.start);
           html += `
             <div class="panel-event" style="background:${ev.color};color:#fff">
-              <div class="panel-event-title">${ev.title}</div>
-              <div class="panel-event-meta">${timeRange} · ${ev.extendedProps.calendarName}</div>
+              <div class="panel-event-title">${esc(ev.title)}</div>
+              <div class="panel-event-meta">${esc(timeRange)} · ${esc(ev.extendedProps.calendarName)}</div>
             </div>`;
         }
 
         html += `</div></div>`;
       }
 
-      // Show empty state if no events at all today
-      if (!todayEvents.length) {
-        html += `<div class="panel-empty">No events today</div>`;
+      if (!eventsForDate.length) {
+        html += `<div class="panel-empty">No events</div>`;
       }
 
+      const timeline = document.getElementById('panel-timeline');
       timeline.innerHTML = html;
 
-      // Scroll to current hour (offset by 1 so there's context above)
-      const scrollToSlot = timeline.querySelector(`[data-hour="${Math.max(0, currentHour - 1)}"]`);
-      if (scrollToSlot) scrollToSlot.scrollIntoView({ block: 'start' });
+      if (isShowingToday) {
+        const scrollTarget = timeline.querySelector(`[data-hour="${Math.max(0, currentHour - 1)}"]`);
+        if (scrollTarget) scrollTarget.scrollIntoView({ block: 'start' });
+      } else {
+        timeline.scrollTop = 0;
+      }
+    }
+
+    function showPanelForDate(dateStr) {
+      panelDate = dateStr;
+      panelOpen ? renderPanel() : openPanel();
     }
 
     function openPanel() {
       panelOpen = true;
       document.getElementById('day-panel').classList.add('open');
-      document.querySelector('.fc-todayPanel-button')?.classList.add('panel-active');
       renderPanel();
-      // Let the CSS transition finish before telling FullCalendar to resize
       document.getElementById('day-panel').addEventListener('transitionend', () => {
         calendarInstance?.updateSize();
       }, { once: true });
@@ -555,36 +848,203 @@
       panelOpen ? closePanel() : openPanel();
     }
 
+    // ── Add Event Modal ───────────────────────────────────────────
+    function populateCalendarSelect() {
+      const select = document.getElementById('form-calendar');
+      if (!calendarList.length) {
+        select.innerHTML = '<option value="" disabled selected>No calendars found</option>';
+        return;
+      }
+      select.innerHTML = calendarList
+        .map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`)
+        .join('');
+    }
+
+    async function loadCalendarList() {
+      try {
+        const r = await fetch('/api/calendars');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        calendarList = await r.json();
+      } catch (err) {
+        console.error('Failed to load calendar list:', err);
+      }
+    }
+
+    function setAllDay(isAllDay) {
+      const timeFields = document.getElementById('time-fields');
+      if (isAllDay) {
+        timeFields.classList.remove('visible');
+      } else {
+        timeFields.classList.add('visible');
+      }
+    }
+
+    function openModal() {
+      // Refresh calendar list in case new calendars were added
+      loadCalendarList().then(populateCalendarSelect);
+
+      // Pre-fill date to today
+      document.getElementById('form-date').value = todayDateString();
+
+      // Pre-fill times to next full hour and +1 hour.
+      // Cap start at 22 so there is always room for an end time one hour later.
+      const now = new Date();
+      const startHour = Math.min(now.getHours() + 1, 22);
+      const endHour   = startHour + 1; // always 1 hour after start (max 23)
+      document.getElementById('form-start').value =
+        `${String(startHour).padStart(2, '0')}:00`;
+      document.getElementById('form-end').value =
+        `${String(endHour).padStart(2, '0')}:00`;
+
+      // Reset fields
+      document.getElementById('form-title').value = '';
+      document.getElementById('form-notes').value = '';
+      document.getElementById('form-allday').checked = true;
+      document.getElementById('form-error').textContent = '';
+      setAllDay(true);
+
+      document.getElementById('modal-overlay').classList.add('open');
+
+      // Focus title after transition (small delay for animation)
+      setTimeout(() => document.getElementById('form-title').focus(), 50);
+    }
+
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('open');
+    }
+
+    async function handleFormSubmit(e) {
+      e.preventDefault();
+
+      const title       = document.getElementById('form-title').value.trim();
+      const allDay      = document.getElementById('form-allday').checked;
+      const date        = document.getElementById('form-date').value;
+      const startTime   = document.getElementById('form-start').value;
+      const endTime     = document.getElementById('form-end').value;
+      const calendarName = document.getElementById('form-calendar').value;
+      const notes       = document.getElementById('form-notes').value.trim();
+      const errorEl     = document.getElementById('form-error');
+
+      errorEl.textContent = '';
+
+      // Client-side validation
+      if (!title) {
+        errorEl.textContent = 'Title is required.';
+        document.getElementById('form-title').focus();
+        return;
+      }
+      if (!date) {
+        errorEl.textContent = 'Date is required.';
+        return;
+      }
+      if (!calendarName) {
+        errorEl.textContent = 'Please select a calendar.';
+        document.getElementById('form-calendar').focus();
+        return;
+      }
+      if (!allDay) {
+        if (!startTime || !endTime) {
+          errorEl.textContent = 'Start and end time are required.';
+          return;
+        }
+        if (startTime >= endTime) {
+          errorEl.textContent = 'End time must be after start time.';
+          return;
+        }
+      }
+
+      const saveBtn = document.getElementById('form-save-btn');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+
+      try {
+        const r = await fetch('/api/events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, allDay, date, startTime, endTime, calendarName, notes }),
+        });
+
+        const data = await r.json();
+
+        if (!r.ok) {
+          throw new Error(data.error || 'Save failed');
+        }
+
+        closeModal();
+        // Server write already happened; refetch picks up the new event immediately
+        calendarInstance.refetchEvents();
+
+      } catch (err) {
+        errorEl.textContent = err.message;
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Event';
+      }
+    }
+
     // ── Init ──────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
 
+      // Panel controls
       document.getElementById('panel-close-btn').addEventListener('click', closePanel);
 
+      // Modal controls
+      document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeModal);
+      document.getElementById('event-form').addEventListener('submit', handleFormSubmit);
+
+      // Close modal when clicking the dark overlay behind the card
+      document.getElementById('modal-overlay').addEventListener('click', e => {
+        if (e.target === document.getElementById('modal-overlay')) closeModal();
+      });
+
+      // Escape key closes modal
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeModal();
+      });
+
+      // All-day toggle shows/hides time fields
+      document.getElementById('form-allday').addEventListener('change', e => {
+        setAllDay(e.target.checked);
+      });
+
+      // Preload calendar list for the modal
+      loadCalendarList().then(populateCalendarSelect);
+
+      // ── FullCalendar ──────────────────────────────────────────
       calendarInstance = new FullCalendar.Calendar(
         document.getElementById('calendar'),
         {
           initialView: 'dayGridMonth',
           height: '100%',
 
-          // Replace the built-in today button with our custom toggle
           customButtons: {
             todayPanel: {
               text: 'Today',
               click() {
-                calendarInstance.today(); // navigate month view to current month
-                togglePanel();
+                calendarInstance.today();
+                panelDate = null;
+                panelOpen ? renderPanel() : openPanel();
               },
+            },
+            addEvent: {
+              text: '+ Add Event',
+              click() { openModal(); },
             },
           },
 
           headerToolbar: {
             left: 'prev,next todayPanel',
             center: 'title',
-            right: '',
+            right: 'addEvent',
           },
 
           firstDay: 0,
           fixedWeekCount: true,
+
+          dateClick(info) {
+            showPanelForDate(info.dateStr);
+          },
 
           events(info, successCallback, failureCallback) {
             fetch('/api/events')
@@ -597,7 +1057,6 @@
                 fetchError = false;
                 lastFetchedAt = Date.now();
                 updateStatus();
-                // Re-render panel in case it's open and events changed
                 if (panelOpen) renderPanel();
                 successCallback(data);
               })
@@ -612,11 +1071,9 @@
       );
 
       calendarInstance.render();
-      openPanel(); // show today's schedule by default on load
+      openPanel(); // show today's panel by default
 
-      // Auto-refresh every 60 s
       setInterval(() => calendarInstance.refetchEvents(), 60000);
-      // Update "X minutes ago" text every 30 s
       setInterval(updateStatus, 30000);
     });
   </script>
