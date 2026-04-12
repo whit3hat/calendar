@@ -6,11 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A physical wall-mounted family calendar with a touchscreen display, running on a Raspberry Pi. Syncs bidirectionally with Apple Calendar (iCloud) so family members can add and view events from their iPhones or directly on the wall display.
 
+**Current status: All four build phases are complete.** Hardware is on order. Next step is deploying to the Pi when it arrives.
+
 ## Repository Structure
 
 ```
 calendar/
 ├── CLAUDE.md                  ← this file
+├── README.md                  ← public-facing project documentation
 ├── .gitignore
 ├── hardware/
 │   └── options.md             ← hardware research (3 options per component)
@@ -21,12 +24,16 @@ calendar/
 │   └── vdirsyncer.conf        ← iCloud CalDAV config TEMPLATE (no real credentials)
 ├── scripts/
 │   └── setup.sh               ← Phase 1 setup script (run on fresh Pi)
-└── app/                       ← Phase 2+ Node.js calendar app (built here)
+└── app/                       ← Node.js calendar app
     ├── package.json
     ├── src/
     │   └── server.js          ← Express API server
-    └── public/
-        └── index.html         ← FullCalendar.js frontend
+    ├── public/
+    │   └── index.html         ← FullCalendar.js frontend (all UI logic)
+    └── data/                  ← Sample .ics files for local Mac development
+        ├── Family/
+        ├── Kids/
+        └── Personal/
 ```
 
 ## Confirmed Decisions
@@ -40,7 +47,7 @@ calendar/
 | Sync tool | vdirsyncer (polls iCloud every 5 minutes, bidirectional) |
 | Display UI | FullCalendar.js (custom web app) |
 | Backend API | Node.js + Express |
-| ICS parsing | ical.js |
+| ICS parsing | node-ical |
 | Kiosk layer | Chromium kiosk mode (auto-start via .bash_profile + openbox) |
 
 ## Key Constraints
@@ -50,10 +57,11 @@ calendar/
 - **Event creation from the Pi** is required (not just display)
 - **iCloud quirk** — create new calendar folders from iPhone or iCloud.com only; vdirsyncer cannot create iCloud collections but reads/writes events inside existing ones freely
 - **Credential security** — real vdirsyncer config lives at `~/.config/vdirsyncer/config` on the Pi, never in this repo. `config/vdirsyncer.conf` is a template only.
+- **Single timezone** — Pi and display are in the same timezone; ICS events use floating local time (no `Z` suffix)
 
 ## Build Phases
 
-### Phase 1 — Pi Setup & iCloud Sync ✅ Scripted
+### Phase 1 — Pi Setup & iCloud Sync ✅ Complete
 **Script:** `scripts/setup.sh`
 Run on a fresh Raspberry Pi OS Lite install. Automates:
 - System update + dependency install (Node.js 22 LTS, vdirsyncer, Chromium, openbox)
@@ -62,76 +70,84 @@ Run on a fresh Raspberry Pi OS Lite install. Automates:
 - Cron job: `*/5 * * * *` keeps calendars in sync
 - Chromium kiosk: auto-launches `http://localhost:8080` on every boot
 
-**Outcome:** Pi has a live copy of the family's iCloud calendars refreshing every 5 min.
+### Phase 2 — Calendar Display ✅ Complete
+A Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
 
-### Phase 2 — Calendar Display (read-only)
-Build the Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
+**Backend (`GET /api/events`, `GET /api/calendars`)**
+- Parses all `.ics` files in `~/.local/share/calendar/` using node-ical
+- Returns local ISO strings (no `Z`) for timed events to avoid timezone mismatches
+- Each subdirectory in CALENDAR_DIR is a separate calendar; color-coded by name
 
-**Backend (`GET /api/events`)**
-- Parse all `.ics` files in `~/.local/share/calendar/` using ical.js
-- Return a JSON array of event objects (id, title, start, end, allDay, calendarName, color)
+**Frontend**
+- `dayGridMonth` view — full month grid, responsive 16:9 landscape layout
+- Dark theme (navy/slate palette)
+- Current day highlighted with a blue circle
+- Events color-coded by calendar (Family=blue, Kids=green, Personal=amber, Work=red)
+- Left/right navigation; "+N more" overflow links
+- Right-side day panel (open by default): shows selected day broken into hour slots with a red now-line; click any day cell to switch the panel to that day; Today button resets to current day
+- Auto-polls `GET /api/events` every 60 seconds
 
-**Frontend (FullCalendar.js)**
-- Default view: `dayGridMonth` — full month grid
-- Current day highlighted
-- Events color-coded by calendar source
-- Left/right navigation arrows to move between months
-- Long event titles truncate; days with overflow show "+N more"
-- Auto-polls `GET /api/events` every 60 seconds — new phone events appear without page reload
-
-**Done when:** Add event in Apple Calendar on phone → appears on Pi within 5 minutes
-
-### Phase 3 — Event Creation from Pi
-Add the ability to create events directly on the touchscreen.
-
+### Phase 3 — Event Creation from Pi ✅ Complete
 **Backend (`POST /api/events`)**
-- Accept event JSON, write a valid `.ics` entry to the local calendar directory
-- vdirsyncer cron picks it up within 5 min and pushes to iCloud
+- Validates input, generates a UUID-named `.ics` file using RFC 5545-compliant ICS generation
+- `foldLine()` handles 75-octet UTF-8-safe line folding; `escapeICS()` handles text escaping
+- Floating local time for timed events; `VALUE=DATE` for all-day events
+- Path traversal prevention via `path.basename(calendarName)`
+- vdirsyncer cron picks up the new file within 5 minutes and pushes to iCloud
 
 **Frontend (touch modal)**
-- Persistent "+" button always visible
-- Large-touch-target form fields:
-  - Title (required)
-  - All-day toggle (default: on)
-  - Date (pre-filled to today or tapped day; date picker)
-  - Start time / End time (shown when all-day is off)
-  - Which calendar (dropdown populated from discovered iCloud calendars)
-  - Notes (optional)
-- Save / Cancel buttons
-- On save: calendar refreshes immediately; event visible on Pi right away
+- Persistent `+ Add Event` button in toolbar
+- Form fields: title (required), calendar dropdown (from `GET /api/calendars`), date picker, all-day toggle, start/end time (shown when all-day is off), notes
+- Start time pre-filled to next full hour (capped at 22:00 to always leave room for end)
+- After save: `refetchEvents()` immediately picks up the written file
 
-**Done when:** Tap "+" on Pi → event appears in Apple Calendar on phone within 5 min
+### Phase 4 — Polish ✅ Complete
+**Event detail popover**
+- Tapping any event opens a read-only popover near the tap position
+- Shows: calendar color dot, title, calendar name, formatted date/time, notes (if any)
+- Smart positioning: flips left or above if it would overflow the viewport
+- Dismissed via X, tap outside, or Escape key
 
-### Phase 4 — Polish
-- Tap an existing event → read-only detail popover (title, calendar, date/time, notes)
-- Scheduled display sleep (off at midnight, on at 6am — configurable)
-- Touch screen at night to wake temporarily
-- Offline graceful state: show last loaded events on API failure, show "Last synced X min ago"
-- No week/day view — month only for wall display use case
+**Display sleep**
+- Full-screen black overlay activates at `SLEEP_HOUR` (default 0 = midnight) and lifts at `WAKE_HOUR` (default 6 = 6 AM)
+- Constants at top of script are easy to change
+- `isSleepTime()` supports wrap-around-midnight windows (e.g. SLEEP_HOUR=23, WAKE_HOUR=7)
+
+**Touch to wake**
+- Tapping the sleep overlay dismisses it for `WAKE_TIMEOUT_MS` (30 seconds) then re-sleeps
+- `goToSleep()` clears/nulls `wakeTimer` unconditionally before the guard to prevent stale timer IDs from breaking future sleep cycles
+
+**Offline graceful state**
+- On `GET /api/events` failure, `allEvents` is not cleared — the last loaded events remain visible
+- Status bar turns red: "Could not reach server — showing last loaded data"
+- On success, status bar shows "Last updated: just now" / "Last updated: N minutes ago" (refreshes every 30 seconds)
 
 ## What We Are NOT Building
 - User login / authentication
-- Editing or deleting existing events from the Pi (create only, not edit/delete)
+- Editing or deleting existing events from the Pi (create only)
 - Push notifications
 - Week or day view
 - Multi-Pi sync
+- Android support
 
 ## Development Notes
 
-### Running the app locally (Phase 2+)
-
-**On the Pi** (reads real iCloud .ics files):
-```bash
-cd ~/calendar-app
-npm install
-npm start
-```
-
-**On Mac for development** (uses sample data in app/data/):
+### Running locally on Mac (uses sample data)
 ```bash
 cd app
 npm install
 CALENDAR_DIR=./data npm start
+# → http://localhost:8080
+```
+
+Sample `.ics` files live in `app/data/Family/`, `app/data/Kids/`, `app/data/Personal/`.
+
+### Running on the Pi (reads real iCloud .ics files)
+```bash
+cd ~/calendar-app
+npm install
+npm start
+# Chromium kiosk opens automatically on boot via .bash_profile → openbox → autostart
 ```
 
 ### Manually trigger a sync
@@ -154,13 +170,39 @@ vdirsyncer discover family_calendar
 DISPLAY=:0 chromium-browser --kiosk http://localhost:8080
 ```
 
+## Key Implementation Details
+
+### ICS Generation (server.js)
+- `escapeICS(str)` — RFC 5545 §3.3.11 text escaping (`\`, `;`, `,`, newlines)
+- `foldLine(line)` — RFC 5545 §3.1 line folding at 75 octets, UTF-8-safe walk-back
+- `nextDay(dateStr)` — computes exclusive `DTEND` for all-day events
+- All-day events: `DTSTART;VALUE=DATE:YYYYMMDD` + `DTEND;VALUE=DATE:YYYYMMDD+1`
+- Timed events: floating local `DTSTART:YYYYMMDDTHHmmss` (no TZID, no Z)
+
+### Calendar Colors (server.js)
+Mapped by subdirectory name (case-insensitive):
+```javascript
+family: '#3b82f6'   // blue
+kids:   '#22c55e'   // green
+personal: '#f59e0b' // amber
+work:   '#ef4444'   // red
+// all others → '#8b5cf6' (purple)
+```
+
+### Sleep Schedule (index.html)
+```javascript
+const SLEEP_HOUR      = 0;      // midnight
+const WAKE_HOUR       = 6;      // 6 AM
+const WAKE_TIMEOUT_MS = 30000;  // 30 sec temporary wake on touch
+```
+
 ## Technology Stack
 
-| Component | Technology | Version | Link |
-|---|---|---|---|
-| OS | Raspberry Pi OS Lite | latest | [raspberrypi.com/software](https://www.raspberrypi.com/software/) |
-| Kiosk | Chromium + openbox | system | [geerlingguy/pi-kiosk](https://github.com/geerlingguy/pi-kiosk) |
-| Calendar sync | vdirsyncer | latest | [vdirsyncer.pimutils.org](https://vdirsyncer.pimutils.org/) |
-| Backend | Node.js + Express | 22.x LTS | [expressjs.com](https://expressjs.com/) |
-| ICS parsing | ical.js | latest | [github.com/kewisch/ical.js](https://github.com/kewisch/ical.js) |
-| Display UI | FullCalendar.js | latest | [fullcalendar.io](https://fullcalendar.io/) |
+| Component | Technology | Version |
+|---|---|---|
+| OS | Raspberry Pi OS Lite (64-bit) | latest |
+| Kiosk | Chromium + openbox | system |
+| Calendar sync | vdirsyncer | latest |
+| Backend | Node.js + Express | 22.x LTS |
+| ICS parsing | node-ical | latest |
+| Display UI | FullCalendar.js | 6.1.15 |
