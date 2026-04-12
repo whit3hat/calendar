@@ -19,8 +19,14 @@ calendar/
 │   └── architecture.md       ← final decided architecture + data flow diagrams
 ├── config/
 │   └── vdirsyncer.conf        ← iCloud CalDAV config TEMPLATE (no real credentials)
-└── scripts/
-    └── setup.sh               ← Phase 1 setup script (run on fresh Pi)
+├── scripts/
+│   └── setup.sh               ← Phase 1 setup script (run on fresh Pi)
+└── app/                       ← Phase 2+ Node.js calendar app (built here)
+    ├── package.json
+    ├── src/
+    │   └── server.js          ← Express API server
+    └── public/
+        └── index.html         ← FullCalendar.js frontend
 ```
 
 ## Confirmed Decisions
@@ -61,32 +67,71 @@ Run on a fresh Raspberry Pi OS Lite install. Automates:
 ### Phase 2 — Calendar Display (read-only)
 Build the Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
 
-- `GET /api/events` — parse `.ics` files in `~/.local/share/calendar/`, return JSON
-- FullCalendar.js frontend — `dayGridMonth` (month view default)
-- Chromium kiosk points at `http://localhost:8080`
-- **Done when:** Add event on phone → appears on Pi within 5 minutes
+**Backend (`GET /api/events`)**
+- Parse all `.ics` files in `~/.local/share/calendar/` using ical.js
+- Return a JSON array of event objects (id, title, start, end, allDay, calendarName, color)
+
+**Frontend (FullCalendar.js)**
+- Default view: `dayGridMonth` — full month grid
+- Current day highlighted
+- Events color-coded by calendar source
+- Left/right navigation arrows to move between months
+- Long event titles truncate; days with overflow show "+N more"
+- Auto-polls `GET /api/events` every 60 seconds — new phone events appear without page reload
+
+**Done when:** Add event in Apple Calendar on phone → appears on Pi within 5 minutes
 
 ### Phase 3 — Event Creation from Pi
 Add the ability to create events directly on the touchscreen.
 
-- `POST /api/events` — write new event to `.ics` file
-- Touch-friendly modal: title, date, start/end time, all-day toggle, which calendar
-- **Done when:** Tap "+" on Pi → event appears in Apple Calendar on phone within 5 min
+**Backend (`POST /api/events`)**
+- Accept event JSON, write a valid `.ics` entry to the local calendar directory
+- vdirsyncer cron picks it up within 5 min and pushes to iCloud
+
+**Frontend (touch modal)**
+- Persistent "+" button always visible
+- Large-touch-target form fields:
+  - Title (required)
+  - All-day toggle (default: on)
+  - Date (pre-filled to today or tapped day; date picker)
+  - Start time / End time (shown when all-day is off)
+  - Which calendar (dropdown populated from discovered iCloud calendars)
+  - Notes (optional)
+- Save / Cancel buttons
+- On save: calendar refreshes immediately; event visible on Pi right away
+
+**Done when:** Tap "+" on Pi → event appears in Apple Calendar on phone within 5 min
 
 ### Phase 4 — Polish
-- Color-code by calendar (per family member or category)
-- Tap event → detail popover (title, time, notes)
-- Scheduled display sleep (off at midnight, on at 6am)
-- Swipe/arrow navigation between months
-- Offline graceful state (show last synced data on network loss)
+- Tap an existing event → read-only detail popover (title, calendar, date/time, notes)
+- Scheduled display sleep (off at midnight, on at 6am — configurable)
+- Touch screen at night to wake temporarily
+- Offline graceful state: show last loaded events on API failure, show "Last synced X min ago"
+- No week/day view — month only for wall display use case
+
+## What We Are NOT Building
+- User login / authentication
+- Editing or deleting existing events from the Pi (create only, not edit/delete)
+- Push notifications
+- Week or day view
+- Multi-Pi sync
 
 ## Development Notes
 
 ### Running the app locally (Phase 2+)
+
+**On the Pi** (reads real iCloud .ics files):
 ```bash
 cd ~/calendar-app
 npm install
-npm start          # starts Express server on :8080
+npm start
+```
+
+**On Mac for development** (uses sample data in app/data/):
+```bash
+cd app
+npm install
+CALENDAR_DIR=./data npm start
 ```
 
 ### Manually trigger a sync

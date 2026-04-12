@@ -1,0 +1,14 @@
+{
+  "name": "family-calendar",
+  "version": "1.0.0",
+  "description": "Raspberry Pi family wall calendar — Node.js + FullCalendar.js",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-ical": "^0.26.0"
+  }
+}

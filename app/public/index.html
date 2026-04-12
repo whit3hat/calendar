@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Family Calendar</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow: hidden; /* no scroll on kiosk display */
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 0.6rem 0.9rem 0.4rem;
+      gap: 0.4rem;
+    }
+
+    #calendar-container {
+      flex: 1;
+      min-height: 0; /* required for flex children to shrink correctly */
+    }
+
+    /* FullCalendar renders into this div — must fill its parent */
+    #calendar {
+      height: 100%;
+    }
+
+    #status-bar {
+      font-size: clamp(0.6rem, 1vw, 0.75rem);
+      color: #475569;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    /* ── FullCalendar dark theme ──────────────────────────────── */
+    :root {
+      --fc-border-color: #1e293b;
+      --fc-today-bg-color: rgba(59, 130, 246, 0.12);
+      --fc-page-bg-color: transparent;
+      --fc-neutral-bg-color: rgba(30, 41, 59, 0.5);
+      --fc-neutral-text-color: #64748b;
+      --fc-button-bg-color: #1e293b;
+      --fc-button-border-color: #334155;
+      --fc-button-hover-bg-color: #334155;
+      --fc-button-hover-border-color: #475569;
+      --fc-button-active-bg-color: #3b82f6;
+      --fc-button-active-border-color: #3b82f6;
+      --fc-event-bg-color: #3b82f6;
+      --fc-event-border-color: transparent;
+      --fc-event-text-color: #fff;
+    }
+
+    /* Month / year title */
+    .fc-toolbar-title {
+      font-size: clamp(1.1rem, 2.8vw, 1.9rem) !important;
+      font-weight: 600 !important;
+      color: #f1f5f9 !important;
+    }
+
+    /* Toolbar spacing */
+    .fc-header-toolbar {
+      margin-bottom: 0.5rem !important;
+      align-items: center !important;
+    }
+
+    /* Navigation buttons */
+    .fc-button-primary {
+      border-radius: 8px !important;
+      font-size: clamp(0.75rem, 1.4vw, 0.95rem) !important;
+      padding: 0.35em 0.75em !important;
+      touch-action: manipulation;
+      text-transform: capitalize;
+      transition: background 0.15s !important;
+    }
+
+    .fc-button:focus {
+      box-shadow: none !important;
+      outline: none !important;
+    }
+
+    /* Day-of-week header row (SUN MON TUE …) */
+    .fc-col-header-cell {
+      background: #1e293b !important;
+      border-color: #334155 !important;
+    }
+
+    .fc-col-header-cell-cushion {
+      color: #64748b !important;
+      font-size: clamp(0.6rem, 1.2vw, 0.75rem) !important;
+      font-weight: 700 !important;
+      text-decoration: none !important;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 0.5rem 0 !important;
+      pointer-events: none;
+    }
+
+    /* Day cells */
+    .fc-daygrid-day {
+      background: transparent !important;
+      border-color: #1e293b !important;
+    }
+
+    .fc-daygrid-day-frame {
+      min-height: 0 !important; /* allow cells to shrink to fill evenly */
+    }
+
+    /* Day numbers */
+    .fc-daygrid-day-number {
+      color: #94a3b8 !important;
+      font-size: clamp(0.7rem, 1.3vw, 0.9rem) !important;
+      text-decoration: none !important;
+      padding: 0.35rem 0.5rem !important;
+      pointer-events: none;
+      line-height: 1;
+    }
+
+    /* Today: blue circle around the date number */
+    .fc-day-today .fc-daygrid-day-top {
+      display: flex;
+      justify-content: flex-end; /* keep number right-aligned */
+    }
+
+    .fc-day-today .fc-daygrid-day-number {
+      background: #3b82f6 !important;
+      color: #fff !important;
+      border-radius: 50%;
+      width: clamp(1.4rem, 2.2vw, 1.8rem);
+      height: clamp(1.4rem, 2.2vw, 1.8rem);
+      display: flex !important;
+      align-items: center;
+      justify-content: center;
+      padding: 0 !important;
+      margin: 0.2rem;
+    }
+
+    /* Days outside the current month */
+    .fc-day-other .fc-daygrid-day-number {
+      color: #334155 !important;
+    }
+
+    /* Event chips */
+    .fc-event {
+      border-radius: 4px !important;
+      border: none !important;
+      font-size: clamp(0.6rem, 1.05vw, 0.72rem) !important;
+      padding: 1px 5px !important;
+      margin: 1px 3px !important;
+      cursor: default !important;
+    }
+
+    .fc-event-title {
+      font-weight: 500 !important;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* "+N more" overflow link */
+    .fc-daygrid-more-link {
+      color: #64748b !important;
+      font-size: clamp(0.55rem, 0.9vw, 0.68rem) !important;
+      text-decoration: none !important;
+      margin: 0 3px !important;
+    }
+
+    /* Grid / scrollgrid lines */
+    .fc-scrollgrid,
+    .fc-scrollgrid td,
+    .fc-scrollgrid th {
+      border-color: #1e293b !important;
+    }
+
+    /* Prevent inner scroll — calendar must fit the screen */
+    .fc-scroller {
+      overflow: hidden !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="calendar-container">
+      <div id="calendar"></div>
+    </div>
+    <div id="status-bar">Loading calendars…</div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script>
+    const statusEl = document.getElementById('status-bar');
+    let lastFetchedAt = null;
+    let fetchError = false;
+
+    function updateStatus() {
+      if (fetchError) {
+        statusEl.textContent = 'Could not reach server — showing last loaded data';
+        statusEl.style.color = '#f87171';
+        return;
+      }
+      if (!lastFetchedAt) return;
+      const mins = Math.floor((Date.now() - lastFetchedAt) / 60000);
+      statusEl.style.color = '#475569';
+      statusEl.textContent = mins < 1
+        ? 'Last updated: just now'
+        : `Last updated: ${mins} minute${mins === 1 ? '' : 's'} ago`;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const calendar = new FullCalendar.Calendar(
+        document.getElementById('calendar'),
+        {
+          initialView: 'dayGridMonth',
+          height: '100%',
+          headerToolbar: {
+            left: 'prev,next today',
+            center: 'title',
+            right: '',
+          },
+          buttonText: { today: 'Today' },
+          firstDay: 0,          // week starts Sunday
+          fixedWeekCount: true, // always 6 rows — consistent height across months
+
+          events(info, successCallback, failureCallback) {
+            fetch('/api/events')
+              .then(r => {
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                return r.json();
+              })
+              .then(data => {
+                fetchError = false;
+                lastFetchedAt = Date.now();
+                updateStatus();
+                successCallback(data);
+              })
+              .catch(err => {
+                console.error('Event fetch failed:', err);
+                fetchError = true;
+                updateStatus();
+                failureCallback(err);
+              });
+          },
+        }
+      );
+
+      calendar.render();
+
+      // Refresh events every 60 seconds — phone changes appear within ~1 min of vdirsyncer
+      setInterval(() => calendar.refetchEvents(), 60000);
+      // Update "X minutes ago" text every 30 seconds without re-fetching
+      setInterval(updateStatus, 30000);
+    });
+  </script>
+</body>
+</html>
