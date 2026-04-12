@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A physical wall-mounted family calendar with a touchscreen display, running on a Raspberry Pi. Syncs bidirectionally with Apple Calendar (iCloud) so family members can add and view events from their iPhones or directly on the wall display.
 
-**Current status: All four build phases are complete.** Hardware is on order. Next step is deploying to the Pi when it arrives.
+**Current status: All five build phases are complete.** Hardware is on order. Next step is deploying to the Pi when it arrives.
 
 ## Repository Structure
 
@@ -122,6 +122,21 @@ A Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
 - Status bar turns red: "Could not reach server — showing last loaded data"
 - On success, status bar shows "Last updated: just now" / "Last updated: N minutes ago" (refreshes every 30 seconds)
 
+### Phase 5 — Weather Widget ✅ Complete
+**Backend (`GET /api/weather`)**
+- Fetches current conditions and 5-day forecast from Open-Meteo (free, no API key)
+- Location and units configurable via `WEATHER_LAT`, `WEATHER_LON`, `WEATHER_UNITS` env vars; defaults to Liberty, MO in Fahrenheit
+- 15-minute server-side in-memory cache — the Pi makes at most 4 outbound fetches per hour
+- On fetch failure, serves stale cache indefinitely; returns 503 only if cache is cold
+
+**Frontend**
+- Weather strip rendered in day panel between the date header and all-day section
+- Strip is hidden (`display: none`) until first successful fetch — graceful if no network
+- Shows: WMO emoji icon + current temp + condition label + today high/low + 4-day forecast cards (day abbr + icon + high)
+- `loadWeather()` called on DOMContentLoaded and then every 15 minutes via `setInterval`
+- WMO code → emoji/label lookup via `WMO_CODES` map (covers all 30 standard WMO interpretation codes); unmapped codes fall back to `🌡️ Unknown`
+- Forecast date strings parsed as `'T12:00:00'` (local noon) to prevent UTC-midnight timezone shifts on day-of-week label
+
 ## What We Are NOT Building
 - User login / authentication
 - Editing or deleting existing events from the Pi (create only)
@@ -138,6 +153,8 @@ cd app
 npm install
 CALENDAR_DIR=./data npm start
 # → http://localhost:8080
+# Weather widget fetches live from Open-Meteo using the hardcoded lat/lon defaults
+# Override with WEATHER_LAT / WEATHER_LON / WEATHER_UNITS if needed
 ```
 
 Sample `.ics` files live in `app/data/Family/`, `app/data/Kids/`, `app/data/Personal/`.
@@ -196,6 +213,14 @@ const WAKE_HOUR       = 6;      // 6 AM
 const WAKE_TIMEOUT_MS = 30000;  // 30 sec temporary wake on touch
 ```
 
+### Weather (server.js + index.html)
+- API: `https://api.open-meteo.com/v1/forecast` — no key, lat/lon only
+- Open-Meteo response uses `weathercode` (no underscore) in both `current` and `daily` blocks
+- Server returns: `{ enabled, current: {temp, code}, today: {high, low}, forecast: [{date, code, high}×4], units }`
+- `forecast` is `daily.time.slice(1, 5)` — index 0 is today, so the 4 forecast cards are indices 1–4
+- Client `WMO_CODES` map is keyed by integer WMO code; `wmoInfo(code)` returns `{ icon, label }`
+- Forecast dates parsed as `day.date + 'T12:00:00'` (local noon) to get correct `getDay()` value
+
 ## Technology Stack
 
 | Component | Technology | Version |
@@ -206,3 +231,4 @@ const WAKE_TIMEOUT_MS = 30000;  // 30 sec temporary wake on touch
 | Backend | Node.js + Express | 22.x LTS |
 | ICS parsing | node-ical | latest |
 | Display UI | FullCalendar.js | 6.1.15 |
+| Weather | Open-Meteo API | free / no key |
