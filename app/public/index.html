@@ -561,6 +561,109 @@
 
     .btn-save { background: #3b82f6; color: #fff; }
     .btn-save:hover:not(:disabled) { background: #2563eb; }
+
+    /* ── Sleep overlay ───────────────────────────────────────── */
+    #sleep-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #000;
+      z-index: 500;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    #sleep-overlay.active { display: flex; align-items: center; justify-content: center; }
+
+    #sleep-overlay-hint {
+      color: #111;   /* nearly invisible against black — visible only if eyes are adjusted */
+      font-size: clamp(0.75rem, 1.2vw, 0.9rem);
+      letter-spacing: 0.06em;
+      user-select: none;
+    }
+
+    /* ── Event detail popover ────────────────────────────────── */
+    #event-popover {
+      display: none;
+      position: fixed;
+      z-index: 400;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1rem;
+      width: min(88vw, 320px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+
+    #event-popover.open { display: block; }
+
+    .popover-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      margin-bottom: 0.8rem;
+    }
+
+    .popover-dot {
+      flex-shrink: 0;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-top: 0.3rem;
+    }
+
+    .popover-title {
+      flex: 1;
+      font-size: clamp(0.95rem, 1.8vw, 1.1rem);
+      font-weight: 700;
+      color: #f1f5f9;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .popover-close {
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      color: #64748b;
+      font-size: 1.1rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0.2rem 0.35rem;
+      border-radius: 5px;
+      touch-action: manipulation;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .popover-close:hover { background: #334155; color: #e2e8f0; }
+
+    .popover-body { display: flex; flex-direction: column; gap: 0.45rem; }
+
+    .popover-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      font-size: clamp(0.75rem, 1.3vw, 0.85rem);
+      color: #94a3b8;
+      line-height: 1.4;
+    }
+
+    .popover-row-label {
+      flex-shrink: 0;
+      min-width: 4.2rem;
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #475569;
+      padding-top: 0.1rem;
+    }
+
+    .popover-notes-text {
+      color: #cbd5e1;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
   </style>
 </head>
 <body>
@@ -654,6 +757,34 @@
     </div>
   </div>
 
+  <!-- Sleep overlay — covers screen during scheduled off hours; touch/click to temporarily wake -->
+  <div id="sleep-overlay" role="presentation" aria-hidden="true">
+    <span id="sleep-overlay-hint">Touch to wake</span>
+  </div>
+
+  <!-- Event detail popover — read-only details shown when tapping a calendar event -->
+  <div id="event-popover" role="dialog" aria-modal="true" aria-label="Event details">
+    <div class="popover-header">
+      <span class="popover-dot" id="popover-dot"></span>
+      <span class="popover-title" id="popover-title"></span>
+      <button class="popover-close" id="popover-close-btn" aria-label="Close">&#x2715;</button>
+    </div>
+    <div class="popover-body">
+      <div class="popover-row">
+        <span class="popover-row-label">Calendar</span>
+        <span id="popover-calendar-name"></span>
+      </div>
+      <div class="popover-row">
+        <span class="popover-row-label">Date</span>
+        <span id="popover-datetime"></span>
+      </div>
+      <div class="popover-row" id="popover-notes-row">
+        <span class="popover-row-label">Notes</span>
+        <span class="popover-notes-text" id="popover-notes-text"></span>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
   <script>
     // ── State ─────────────────────────────────────────────────────
@@ -664,6 +795,12 @@
     let calendarInstance = null;
     let lastFetchedAt    = null;
     let fetchError       = false;
+
+    // Sleep schedule (24-hr local time)
+    const SLEEP_HOUR      = 0;      // display goes dark at midnight
+    const WAKE_HOUR       = 6;      // display wakes automatically at 6 AM
+    const WAKE_TIMEOUT_MS = 30000;  // ms to stay awake after a touch during sleep hours
+    let   wakeTimer       = null;
 
     // ── HTML escaping ─────────────────────────────────────────────
     function esc(str) {
@@ -735,6 +872,51 @@
       statusEl.textContent = mins < 1
         ? 'Last updated: just now'
         : `Last updated: ${mins} minute${mins === 1 ? '' : 's'} ago`;
+    }
+
+    // ── Sleep schedule ────────────────────────────────────────────
+    // Returns true when the current hour falls inside the sleep window.
+    // Handles wrap-around midnight (e.g. SLEEP_HOUR=23, WAKE_HOUR=7) correctly.
+    function isSleepTime() {
+      const h = new Date().getHours();
+      return SLEEP_HOUR < WAKE_HOUR
+        ? h >= SLEEP_HOUR && h < WAKE_HOUR
+        : h >= SLEEP_HOUR || h < WAKE_HOUR;
+    }
+
+    function goToSleep() {
+      // Always cancel and null the timer first — even if the guard below returns early.
+      // If wakeTimer stays non-null after an early return, checkSleepSchedule's
+      // `wakeTimer === null` condition will never be true again, breaking future nights.
+      clearTimeout(wakeTimer);
+      wakeTimer = null;
+      if (!isSleepTime()) return; // don't sleep outside the scheduled window
+      closeEventPopover();
+      closeModal();
+      document.getElementById('sleep-overlay').classList.add('active');
+    }
+
+    function wakeUp() {
+      document.getElementById('sleep-overlay').classList.remove('active');
+      if (isSleepTime()) {
+        // Temporarily awake — return to sleep after the wake timeout
+        clearTimeout(wakeTimer);
+        wakeTimer = setTimeout(goToSleep, WAKE_TIMEOUT_MS);
+      }
+    }
+
+    // Called every minute to enter/exit sleep based on the current time.
+    function checkSleepSchedule() {
+      const asleep = document.getElementById('sleep-overlay').classList.contains('active');
+      if (isSleepTime()) {
+        // Enter sleep only if not already asleep and no temporary wake is active
+        if (!asleep && wakeTimer === null) goToSleep();
+      } else if (asleep) {
+        // Scheduled wake time reached — permanently exit sleep
+        clearTimeout(wakeTimer);
+        wakeTimer = null;
+        document.getElementById('sleep-overlay').classList.remove('active');
+      }
     }
 
     // ── Day panel ─────────────────────────────────────────────────
@@ -846,6 +1028,88 @@
 
     function togglePanel() {
       panelOpen ? closePanel() : openPanel();
+    }
+
+    // ── Event detail popover ──────────────────────────────────────
+    // Format a Date object as "H AM/PM" or "H:MM AM/PM" in local time.
+    function formatTimeFromDate(d) {
+      let h = d.getHours();
+      const m = d.getMinutes();
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return m ? `${h}:${String(m).padStart(2, '0')} ${ampm}` : `${h} ${ampm}`;
+    }
+
+    // Returns a human-readable date+time string for the popover header.
+    function formatEventDateTime(event) {
+      const start     = event.start; // FullCalendar provides a native Date
+      const end       = event.end;
+      const dayName   = DAYS[start.getDay()];
+      const monthName = MONTHS[start.getMonth()];
+      const day       = start.getDate();
+      const year      = start.getFullYear();
+      const thisYear  = new Date().getFullYear();
+      const dateLabel = year === thisYear
+        ? `${dayName}, ${monthName} ${day}`
+        : `${dayName}, ${monthName} ${day}, ${year}`;
+
+      if (event.allDay) return dateLabel;
+
+      const startTime = formatTimeFromDate(start);
+      const endTime   = end ? formatTimeFromDate(end) : null;
+      return endTime
+        ? `${dateLabel}  ·  ${startTime} – ${endTime}`
+        : `${dateLabel}  ·  ${startTime}`;
+    }
+
+    function openEventPopover(fcEvent, jsEvent) {
+      // Prevent the click from bubbling to document and immediately closing the popover
+      jsEvent.stopPropagation();
+
+      const ext = fcEvent.extendedProps;
+
+      // Populate content (textContent is XSS-safe — no escaping needed)
+      document.getElementById('popover-dot').style.background        = fcEvent.backgroundColor || '#8b5cf6';
+      document.getElementById('popover-title').textContent           = fcEvent.title;
+      document.getElementById('popover-calendar-name').textContent   = ext.calendarName || '';
+      document.getElementById('popover-datetime').textContent        = formatEventDateTime(fcEvent);
+
+      const notesRow  = document.getElementById('popover-notes-row');
+      const notesText = document.getElementById('popover-notes-text');
+      if (ext.notes && ext.notes.trim()) {
+        notesText.textContent  = ext.notes.trim();
+        notesRow.style.display = '';
+      } else {
+        notesRow.style.display = 'none';
+      }
+
+      // Position off-screen first so we can read its rendered size
+      const popover = document.getElementById('event-popover');
+      popover.style.left = '-9999px';
+      popover.style.top  = '-9999px';
+      popover.classList.add('open');
+
+      // After layout, move the popover near the tap while keeping it inside the viewport
+      requestAnimationFrame(() => {
+        const pr  = popover.getBoundingClientRect();
+        const vw  = window.innerWidth;
+        const vh  = window.innerHeight;
+        const gap = 12;
+
+        let left = jsEvent.clientX + gap;
+        let top  = jsEvent.clientY + gap;
+
+        // Flip to the left / above if it would overflow the right / bottom edge
+        if (left + pr.width  > vw - gap) left = jsEvent.clientX - pr.width  - gap;
+        if (top  + pr.height > vh - gap) top  = jsEvent.clientY - pr.height - gap;
+
+        popover.style.left = `${Math.max(gap, left)}px`;
+        popover.style.top  = `${Math.max(gap, top)}px`;
+      });
+    }
+
+    function closeEventPopover() {
+      document.getElementById('event-popover').classList.remove('open');
     }
 
     // ── Add Event Modal ───────────────────────────────────────────
@@ -998,9 +1262,9 @@
         if (e.target === document.getElementById('modal-overlay')) closeModal();
       });
 
-      // Escape key closes modal
+      // Escape key closes modal and/or event popover
       document.addEventListener('keydown', e => {
-        if (e.key === 'Escape') closeModal();
+        if (e.key === 'Escape') { closeModal(); closeEventPopover(); }
       });
 
       // All-day toggle shows/hides time fields
@@ -1046,6 +1310,10 @@
             showPanelForDate(info.dateStr);
           },
 
+          eventClick(info) {
+            openEventPopover(info.event, info.jsEvent);
+          },
+
           events(info, successCallback, failureCallback) {
             fetch('/api/events')
               .then(r => {
@@ -1070,11 +1338,33 @@
         }
       );
 
+      // Sleep overlay — touch or click to temporarily wake the display
+      document.getElementById('sleep-overlay').addEventListener('click', wakeUp);
+      document.getElementById('sleep-overlay').addEventListener('touchstart', wakeUp, { passive: true });
+
+      // Event popover — close button
+      document.getElementById('popover-close-btn').addEventListener('click', e => {
+        e.stopPropagation(); // don't let this reach the document click-outside listener
+        closeEventPopover();
+      });
+
+      // Click outside the event popover to close it
+      document.addEventListener('click', e => {
+        const popover = document.getElementById('event-popover');
+        if (popover.classList.contains('open') && !popover.contains(e.target)) {
+          closeEventPopover();
+        }
+      });
+
       calendarInstance.render();
       openPanel(); // show today's panel by default
 
       setInterval(() => calendarInstance.refetchEvents(), 60000);
       setInterval(updateStatus, 30000);
+
+      // Sleep schedule — check now and then every minute
+      checkSleepSchedule();
+      setInterval(checkSleepSchedule, 60000);
     });
   </script>
 </body>
