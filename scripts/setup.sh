@@ -85,14 +85,15 @@ step "2/7  Installing dependencies"
 sudo apt-get install -y -qq \
   curl \
   git \
+  gnupg \
   python3 \
-  python3-pip \
   python3-venv \
+  pipx \
   xserver-xorg \
   x11-xserver-utils \
   xinit \
   openbox \
-  chromium-browser \
+  chromium \
   unclutter \
   xdotool
 ok "Dependencies installed"
@@ -102,8 +103,12 @@ if command -v node &>/dev/null && [[ "$(node -v)" == v${NODE_MAJOR}* ]]; then
   ok "Node.js $(node -v) already installed — skipping"
 else
   info "Installing Node.js ${NODE_MAJOR}.x LTS..."
-  curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | sudo -E bash - 2>/dev/null
-  sudo apt-get install -y nodejs 2>/dev/null
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+    | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+  sudo apt-get update -qq
+  sudo apt-get install -y nodejs
   ok "Node.js $(node -v) installed"
 fi
 
@@ -111,7 +116,7 @@ fi
 # 3. VDIRSYNCER
 # ─────────────────────────────────────────────────────────────
 step "3/7  Installing vdirsyncer"
-pip3 install --user --upgrade vdirsyncer --quiet
+pipx install vdirsyncer
 
 # Ensure ~/.local/bin is in PATH
 if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
@@ -210,7 +215,7 @@ CRON_LINE="*/5 * * * * $HOME/.local/bin/vdirsyncer sync >> $LOG_DIR/sync.log 2>&
 if crontab -l 2>/dev/null | grep -q "vdirsyncer sync"; then
   ok "Cron job already exists — skipping"
 else
-  (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
+  (crontab -l 2>/dev/null || true; echo "$CRON_LINE") | crontab -
   ok "Cron job added (runs every 5 minutes)"
 fi
 
@@ -230,7 +235,7 @@ xset -dpms
 unclutter -idle 0.5 -root &
 
 # Launch Chromium in kiosk mode
-chromium-browser \\
+chromium \\
   --kiosk \\
   --noerrdialogs \\
   --disable-infobars \\
