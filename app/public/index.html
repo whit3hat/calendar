@@ -12,7 +12,7 @@
       background: #0f172a;
       color: #e2e8f0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      overflow: hidden; /* no scroll on kiosk display */
+      overflow: hidden;
     }
 
     #app {
@@ -23,16 +23,200 @@
       gap: 0.4rem;
     }
 
-    #calendar-container {
+    /* Row containing the calendar and (optionally) the day panel */
+    #main-content {
+      display: flex;
       flex: 1;
-      min-height: 0; /* required for flex children to shrink correctly */
+      min-height: 0;
+      gap: 0.75rem;
     }
 
-    /* FullCalendar renders into this div — must fill its parent */
+    #calendar-container {
+      flex: 1;
+      min-height: 0;
+      min-width: 0; /* allow flex child to shrink below content width */
+    }
+
     #calendar {
       height: 100%;
     }
 
+    /* ── Day panel ─────────────────────────────────────────────── */
+    #day-panel {
+      width: 0;
+      overflow: hidden;
+      flex-shrink: 0;
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    #day-panel.open {
+      width: 28vw;
+    }
+
+    /* Fixed-width inner wrapper — gets clipped by parent overflow:hidden */
+    .panel-inner {
+      width: 28vw;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: #1e293b;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem 0.6rem;
+      border-bottom: 1px solid #334155;
+      flex-shrink: 0;
+    }
+
+    .panel-date {
+      font-size: clamp(0.85rem, 1.6vw, 1.1rem);
+      font-weight: 600;
+      color: #f1f5f9;
+    }
+
+    .panel-close {
+      background: none;
+      border: none;
+      color: #64748b;
+      font-size: 1.3rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0.25rem 0.4rem;
+      border-radius: 6px;
+      touch-action: manipulation;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .panel-close:hover {
+      background: #334155;
+      color: #e2e8f0;
+    }
+
+    /* All-day events strip */
+    .panel-allday {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid #334155;
+      flex-shrink: 0;
+      display: none; /* hidden when empty */
+    }
+
+    .panel-allday.has-events {
+      display: block;
+    }
+
+    .panel-allday-label {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #475569;
+      margin-bottom: 0.35rem;
+    }
+
+    /* Scrollable timeline */
+    .panel-timeline {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: #334155 transparent;
+    }
+
+    .panel-timeline::-webkit-scrollbar { width: 4px; }
+    .panel-timeline::-webkit-scrollbar-track { background: transparent; }
+    .panel-timeline::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+
+    .hour-slot {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      padding: 0 0.75rem;
+      min-height: 3.25rem;
+      border-bottom: 1px solid #1a2744;
+      position: relative;
+    }
+
+    .hour-slot.current-hour {
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .hour-label {
+      flex-shrink: 0;
+      width: 3.2rem;
+      font-size: clamp(0.6rem, 1vw, 0.7rem);
+      color: #475569;
+      padding-top: 0.55rem;
+      text-align: right;
+    }
+
+    .hour-events {
+      flex: 1;
+      min-width: 0;
+      padding: 0.3rem 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    /* Now indicator — red line at current time */
+    .now-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: #ef4444;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .now-line::before {
+      content: '';
+      position: absolute;
+      left: 3.7rem;
+      top: -4px;
+      width: 10px;
+      height: 10px;
+      background: #ef4444;
+      border-radius: 50%;
+    }
+
+    /* Event chips in panel */
+    .panel-event {
+      border-radius: 5px;
+      padding: 0.25rem 0.5rem;
+      font-size: clamp(0.6rem, 1vw, 0.72rem);
+      line-height: 1.3;
+      overflow: hidden;
+    }
+
+    .panel-event-title {
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .panel-event-meta {
+      font-size: 0.85em;
+      opacity: 0.85;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .panel-empty {
+      text-align: center;
+      color: #475569;
+      font-size: clamp(0.7rem, 1.2vw, 0.85rem);
+      padding: 2rem 1rem;
+    }
+
+    /* Status bar */
     #status-bar {
       font-size: clamp(0.6rem, 1vw, 0.75rem);
       color: #475569;
@@ -58,20 +242,17 @@
       --fc-event-text-color: #fff;
     }
 
-    /* Month / year title */
     .fc-toolbar-title {
       font-size: clamp(1.1rem, 2.8vw, 1.9rem) !important;
       font-weight: 600 !important;
       color: #f1f5f9 !important;
     }
 
-    /* Toolbar spacing */
     .fc-header-toolbar {
       margin-bottom: 0.5rem !important;
       align-items: center !important;
     }
 
-    /* Navigation buttons */
     .fc-button-primary {
       border-radius: 8px !important;
       font-size: clamp(0.75rem, 1.4vw, 0.95rem) !important;
@@ -81,12 +262,17 @@
       transition: background 0.15s !important;
     }
 
+    /* Highlight the Today button when panel is open */
+    .fc-todayPanel-button.panel-active {
+      background-color: #3b82f6 !important;
+      border-color: #3b82f6 !important;
+    }
+
     .fc-button:focus {
       box-shadow: none !important;
       outline: none !important;
     }
 
-    /* Day-of-week header row (SUN MON TUE …) */
     .fc-col-header-cell {
       background: #1e293b !important;
       border-color: #334155 !important;
@@ -103,17 +289,15 @@
       pointer-events: none;
     }
 
-    /* Day cells */
     .fc-daygrid-day {
       background: transparent !important;
       border-color: #1e293b !important;
     }
 
     .fc-daygrid-day-frame {
-      min-height: 0 !important; /* allow cells to shrink to fill evenly */
+      min-height: 0 !important;
     }
 
-    /* Day numbers */
     .fc-daygrid-day-number {
       color: #94a3b8 !important;
       font-size: clamp(0.7rem, 1.3vw, 0.9rem) !important;
@@ -123,10 +307,9 @@
       line-height: 1;
     }
 
-    /* Today: blue circle around the date number */
     .fc-day-today .fc-daygrid-day-top {
       display: flex;
-      justify-content: flex-end; /* keep number right-aligned */
+      justify-content: flex-end;
     }
 
     .fc-day-today .fc-daygrid-day-number {
@@ -142,12 +325,10 @@
       margin: 0.2rem;
     }
 
-    /* Days outside the current month */
     .fc-day-other .fc-daygrid-day-number {
       color: #334155 !important;
     }
 
-    /* Event chips */
     .fc-event {
       border-radius: 4px !important;
       border: none !important;
@@ -164,7 +345,6 @@
       white-space: nowrap;
     }
 
-    /* "+N more" overflow link */
     .fc-daygrid-more-link {
       color: #64748b !important;
       font-size: clamp(0.55rem, 0.9vw, 0.68rem) !important;
@@ -172,14 +352,12 @@
       margin: 0 3px !important;
     }
 
-    /* Grid / scrollgrid lines */
     .fc-scrollgrid,
     .fc-scrollgrid td,
     .fc-scrollgrid th {
       border-color: #1e293b !important;
     }
 
-    /* Prevent inner scroll — calendar must fit the screen */
     .fc-scroller {
       overflow: hidden !important;
     }
@@ -187,17 +365,78 @@
 </head>
 <body>
   <div id="app">
-    <div id="calendar-container">
-      <div id="calendar"></div>
+    <div id="main-content">
+
+      <div id="calendar-container">
+        <div id="calendar"></div>
+      </div>
+
+      <div id="day-panel">
+        <div class="panel-inner">
+          <div class="panel-header">
+            <div class="panel-date" id="panel-date-label"></div>
+            <button class="panel-close" id="panel-close-btn" aria-label="Close panel">&#x2715;</button>
+          </div>
+          <div class="panel-allday" id="panel-allday"></div>
+          <div class="panel-timeline" id="panel-timeline"></div>
+        </div>
+      </div>
+
     </div>
     <div id="status-bar">Loading calendars…</div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
   <script>
-    const statusEl = document.getElementById('status-bar');
+    // ── State ─────────────────────────────────────────────────────
+    let allEvents = [];      // latest fetched events from /api/events
+    let panelOpen = false;
+    let calendarInstance = null;
     let lastFetchedAt = null;
     let fetchError = false;
+
+    // ── Helpers ───────────────────────────────────────────────────
+    const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const MONTHS = ['January','February','March','April','May','June','July',
+                    'August','September','October','November','December'];
+
+    function todayDateString() {
+      const n = new Date();
+      return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+    }
+
+    function localDateString(date) {
+      return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    }
+
+    function formatTime(isoString) {
+      const d = new Date(isoString);
+      let h = d.getHours();
+      const m = d.getMinutes();
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return m ? `${h}:${String(m).padStart(2,'0')} ${ampm}` : `${h} ${ampm}`;
+    }
+
+    function hourLabel(h) {
+      if (h === 0)  return '12 AM';
+      if (h < 12)   return `${h} AM`;
+      if (h === 12) return '12 PM';
+      return `${h - 12} PM`;
+    }
+
+    // Returns true if the event falls on today (local time)
+    function isToday(ev) {
+      const today = todayDateString();
+      if (ev.allDay) {
+        // all-day end is exclusive (next day), start is YYYY-MM-DD
+        return ev.start <= today && (!ev.end || ev.end > today);
+      }
+      return localDateString(new Date(ev.start)) === today;
+    }
+
+    // ── Status bar ────────────────────────────────────────────────
+    const statusEl = document.getElementById('status-bar');
 
     function updateStatus() {
       if (fetchError) {
@@ -213,20 +452,139 @@
         : `Last updated: ${mins} minute${mins === 1 ? '' : 's'} ago`;
     }
 
+    // ── Day panel ─────────────────────────────────────────────────
+    function renderPanel() {
+      const now = new Date();
+      const todayEvents = allEvents.filter(isToday);
+
+      // Header date label
+      document.getElementById('panel-date-label').textContent =
+        `${DAYS[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}`;
+
+      // All-day section
+      const alldayEl = document.getElementById('panel-allday');
+      const alldayEvents = todayEvents.filter(ev => ev.allDay);
+      if (alldayEvents.length) {
+        alldayEl.classList.add('has-events');
+        alldayEl.innerHTML = `<div class="panel-allday-label">All Day</div>` +
+          alldayEvents.map(ev => `
+            <div class="panel-event" style="background:${ev.color};color:#fff;margin-bottom:0.2rem">
+              <div class="panel-event-title">${ev.title}</div>
+            </div>`).join('');
+      } else {
+        alldayEl.classList.remove('has-events');
+        alldayEl.innerHTML = '';
+      }
+
+      // Timeline
+      const timedEvents = todayEvents.filter(ev => !ev.allDay);
+      const timeline = document.getElementById('panel-timeline');
+
+      // Build a map: hour → events starting in that hour
+      const byHour = {};
+      for (const ev of timedEvents) {
+        const h = new Date(ev.start).getHours();
+        (byHour[h] = byHour[h] || []).push(ev);
+      }
+
+      const currentHour = now.getHours();
+      const currentMin  = now.getMinutes();
+
+      let html = '';
+      for (let h = 0; h < 24; h++) {
+        const isCurrent = h === currentHour;
+        const eventsHere = byHour[h] || [];
+
+        // Now-indicator position within this hour slot (% of slot height)
+        const nowLineStyle = isCurrent
+          ? `top: calc(${(currentMin / 60) * 100}%)`
+          : '';
+
+        html += `<div class="hour-slot${isCurrent ? ' current-hour' : ''}" data-hour="${h}">`;
+        if (isCurrent) html += `<div class="now-line" style="${nowLineStyle}"></div>`;
+        html += `<div class="hour-label">${hourLabel(h)}</div>`;
+        html += `<div class="hour-events">`;
+
+        for (const ev of eventsHere) {
+          const timeRange = ev.end
+            ? `${formatTime(ev.start)} – ${formatTime(ev.end)}`
+            : formatTime(ev.start);
+          html += `
+            <div class="panel-event" style="background:${ev.color};color:#fff">
+              <div class="panel-event-title">${ev.title}</div>
+              <div class="panel-event-meta">${timeRange} · ${ev.extendedProps.calendarName}</div>
+            </div>`;
+        }
+
+        html += `</div></div>`;
+      }
+
+      // Show empty state if no events at all today
+      if (!todayEvents.length) {
+        html += `<div class="panel-empty">No events today</div>`;
+      }
+
+      timeline.innerHTML = html;
+
+      // Scroll to current hour (offset by 1 so there's context above)
+      const scrollToSlot = timeline.querySelector(`[data-hour="${Math.max(0, currentHour - 1)}"]`);
+      if (scrollToSlot) scrollToSlot.scrollIntoView({ block: 'start' });
+    }
+
+    function openPanel() {
+      panelOpen = true;
+      document.getElementById('day-panel').classList.add('open');
+      document.querySelector('.fc-todayPanel-button')?.classList.add('panel-active');
+      renderPanel();
+      // Let the CSS transition finish before telling FullCalendar to resize
+      document.getElementById('day-panel').addEventListener('transitionend', () => {
+        calendarInstance?.updateSize();
+      }, { once: true });
+    }
+
+    function closePanel() {
+      panelOpen = false;
+      document.getElementById('day-panel').classList.remove('open');
+      document.querySelector('.fc-todayPanel-button')?.classList.remove('panel-active');
+      document.getElementById('day-panel').addEventListener('transitionend', () => {
+        calendarInstance?.updateSize();
+      }, { once: true });
+    }
+
+    function togglePanel() {
+      panelOpen ? closePanel() : openPanel();
+    }
+
+    // ── Init ──────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
-      const calendar = new FullCalendar.Calendar(
+
+      document.getElementById('panel-close-btn').addEventListener('click', closePanel);
+
+      calendarInstance = new FullCalendar.Calendar(
         document.getElementById('calendar'),
         {
           initialView: 'dayGridMonth',
           height: '100%',
+
+          // Replace the built-in today button with our custom toggle
+          customButtons: {
+            todayPanel: {
+              text: 'Today',
+              click() {
+                calendarInstance.today(); // navigate month view to current month
+                togglePanel();
+              },
+            },
+          },
+
           headerToolbar: {
-            left: 'prev,next today',
+            left: 'prev,next todayPanel',
             center: 'title',
             right: '',
           },
-          buttonText: { today: 'Today' },
-          firstDay: 0,          // week starts Sunday
-          fixedWeekCount: true, // always 6 rows — consistent height across months
+
+          firstDay: 0,
+          fixedWeekCount: true,
 
           events(info, successCallback, failureCallback) {
             fetch('/api/events')
@@ -235,9 +593,12 @@
                 return r.json();
               })
               .then(data => {
+                allEvents = data;
                 fetchError = false;
                 lastFetchedAt = Date.now();
                 updateStatus();
+                // Re-render panel in case it's open and events changed
+                if (panelOpen) renderPanel();
                 successCallback(data);
               })
               .catch(err => {
@@ -250,11 +611,12 @@
         }
       );
 
-      calendar.render();
+      calendarInstance.render();
+      openPanel(); // show today's schedule by default on load
 
-      // Refresh events every 60 seconds — phone changes appear within ~1 min of vdirsyncer
-      setInterval(() => calendar.refetchEvents(), 60000);
-      // Update "X minutes ago" text every 30 seconds without re-fetching
+      // Auto-refresh every 60 s
+      setInterval(() => calendarInstance.refetchEvents(), 60000);
+      // Update "X minutes ago" text every 30 s
       setInterval(updateStatus, 30000);
     });
   </script>
