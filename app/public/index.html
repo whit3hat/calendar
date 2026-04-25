@@ -1009,38 +1009,9 @@
     }
 
     // ── Weather ───────────────────────────────────────────────────
-    // WMO weather interpretation codes → emoji + label
-    const WMO_CODES = {
-       0: { icon: '☀️',  label: 'Clear' },
-       1: { icon: '🌤️', label: 'Mainly Clear' },
-       2: { icon: '⛅',  label: 'Partly Cloudy' },
-       3: { icon: '☁️',  label: 'Overcast' },
-      45: { icon: '🌫️', label: 'Foggy' },
-      48: { icon: '🌫️', label: 'Foggy' },
-      51: { icon: '🌦️', label: 'Light Drizzle' },
-      53: { icon: '🌦️', label: 'Drizzle' },
-      55: { icon: '🌦️', label: 'Heavy Drizzle' },
-      61: { icon: '🌧️', label: 'Light Rain' },
-      63: { icon: '🌧️', label: 'Rain' },
-      65: { icon: '🌧️', label: 'Heavy Rain' },
-      71: { icon: '🌨️', label: 'Light Snow' },
-      73: { icon: '🌨️', label: 'Snow' },
-      75: { icon: '🌨️', label: 'Heavy Snow' },
-      77: { icon: '🌨️', label: 'Snow Grains' },
-      80: { icon: '🌧️', label: 'Rain Showers' },
-      81: { icon: '🌧️', label: 'Rain Showers' },
-      82: { icon: '🌧️', label: 'Heavy Showers' },
-      85: { icon: '🌨️', label: 'Snow Showers' },
-      86: { icon: '🌨️', label: 'Heavy Snow Showers' },
-      95: { icon: '⛈️',  label: 'Thunderstorm' },
-      96: { icon: '⛈️',  label: 'Thunderstorm' },
-      99: { icon: '⛈️',  label: 'Thunderstorm' },
-    };
-
-    function wmoInfo(code) {
-      return WMO_CODES[code] || { icon: '🌡️', label: 'Unknown' };
-    }
-
+    // The server has already resolved each weather code to an icon + label,
+    // so the client just renders the strings it was handed (Pi Zero 2 W
+    // optimization — saves ~1KB of JS and per-render lookup work).
     const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     async function loadWeather() {
@@ -1050,21 +1021,18 @@
         const w = await r.json();
         if (!w.enabled) return;
 
-        const { icon, label } = wmoInfo(w.current.code);
-
-        document.getElementById('weather-icon').textContent = icon;
+        document.getElementById('weather-icon').textContent = w.current.icon;
         document.getElementById('weather-temp').textContent = `${w.current.temp}°${w.units}`;
-        document.getElementById('weather-desc').textContent = label;
+        document.getElementById('weather-desc').textContent = w.current.label;
         document.getElementById('weather-hilo').textContent =
           `↑ ${w.today.high}°  ↓ ${w.today.low}°`;
 
         document.getElementById('weather-forecast').innerHTML = w.forecast.map(day => {
           // Parse as local noon to avoid any UTC-midnight timezone shift on the day name
           const date = new Date(day.date + 'T12:00:00');
-          const { icon: dayIcon } = wmoInfo(day.code);
           return `<div class="weather-day">` +
             `<span class="weather-day-name">${DAY_ABBR[date.getDay()]}</span>` +
-            `<span class="weather-day-icon">${dayIcon}</span>` +
+            `<span class="weather-day-icon">${esc(day.icon)}</span>` +
             `<span class="weather-day-high">${day.high}°</span>` +
             `</div>`;
         }).join('');
