@@ -1,8 +1,13 @@
 #!/bin/bash
 # ================================================================
-# Pi Family Calendar — Phase 1 Setup
+# Pi Family Calendar — Phase 1 Setup (Pi Zero 2 W variant)
 # ================================================================
-# Tested on: Raspberry Pi OS Lite (64-bit), Pi 4 and Pi 5
+# Tested on: Raspberry Pi OS Lite (64-bit), Pi Zero 2 W
+#
+# This branch targets the Pi Zero 2 W (512MB RAM, quad-core ARMv8).
+# The script provisions a 1GB swap file before launching Chromium
+# kiosk and passes memory-pressure flags so the browser is less
+# likely to be OOM-killed under load.
 #
 # Prerequisites (do these before running this script):
 #   - Pi is connected to WiFi or Ethernet
@@ -20,8 +25,9 @@
 #   3. Installs vdirsyncer (iCloud CalDAV sync tool)
 #   4. Configures vdirsyncer with your iCloud credentials
 #   5. Discovers your iCloud calendars and runs initial sync
-#   6. Sets up Chromium kiosk (auto-launches on every boot)
-#   7. Adds a cron job to sync calendars every 5 minutes
+#   6. Sets up a 1GB swap file (Pi Zero 2 W only has 512MB RAM)
+#   7. Sets up Chromium kiosk (auto-launches on every boot)
+#   8. Adds a cron job to sync calendars every 5 minutes
 # ================================================================
 
 set -e  # Exit immediately on any error
@@ -60,7 +66,7 @@ fi
 
 # ── Banner ────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}Pi Family Calendar — Phase 1 Setup${NC}"
+echo -e "${BOLD}Pi Family Calendar — Phase 1 Setup (Pi Zero 2 W variant)${NC}"
 echo "────────────────────────────────────────────────────"
 echo "This will configure your Pi as a family wall calendar."
 echo "Total estimated time: 10–20 minutes."
@@ -73,7 +79,7 @@ read -rp "Press Enter to begin, or Ctrl+C to cancel..."
 # ─────────────────────────────────────────────────────────────
 # 1. SYSTEM UPDATE
 # ─────────────────────────────────────────────────────────────
-step "1/7  Updating system packages"
+step "1/8  Updating system packages"
 sudo apt-get update -qq
 sudo apt-get upgrade -y -qq
 ok "System is up to date"
@@ -81,7 +87,7 @@ ok "System is up to date"
 # ─────────────────────────────────────────────────────────────
 # 2. DEPENDENCIES
 # ─────────────────────────────────────────────────────────────
-step "2/7  Installing dependencies"
+step "2/8  Installing dependencies"
 sudo apt-get install -y -qq \
   curl \
   git \
@@ -115,7 +121,7 @@ fi
 # ─────────────────────────────────────────────────────────────
 # 3. VDIRSYNCER
 # ─────────────────────────────────────────────────────────────
-step "3/7  Installing vdirsyncer"
+step "3/8  Installing vdirsyncer"
 pipx install vdirsyncer
 
 # Ensure ~/.local/bin is in PATH
@@ -128,7 +134,7 @@ ok "vdirsyncer installed"
 # ─────────────────────────────────────────────────────────────
 # 4. CREATE DIRECTORIES
 # ─────────────────────────────────────────────────────────────
-step "4/7  Creating data directories"
+step "4/8  Creating data directories"
 mkdir -p \
   "$CALENDAR_DIR" \
   "$STATUS_DIR" \
@@ -141,7 +147,7 @@ ok "Directories created"
 # ─────────────────────────────────────────────────────────────
 # 5. ICLOUD CONFIG + SYNC
 # ─────────────────────────────────────────────────────────────
-step "5/7  Configuring iCloud CalDAV"
+step "5/8  Configuring iCloud CalDAV"
 
 if [ -f "$VDIR_CONFIG" ]; then
   warn "vdirsyncer config already exists — skipping credential setup."
@@ -209,7 +215,7 @@ fi
 # ─────────────────────────────────────────────────────────────
 # 6. CRON JOB
 # ─────────────────────────────────────────────────────────────
-step "6/7  Setting up 5-minute sync cron job"
+step "6/8  Setting up 5-minute sync cron job"
 CRON_LINE="*/5 * * * * $HOME/.local/bin/vdirsyncer sync >> $LOG_DIR/sync.log 2>&1"
 
 if crontab -l 2>/dev/null | grep -q "vdirsyncer sync"; then
@@ -220,9 +226,47 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 7. CHROMIUM KIOSK
+# 7. SWAP FILE  (Pi Zero 2 W only has 512MB RAM)
 # ─────────────────────────────────────────────────────────────
-step "7/7  Configuring Chromium kiosk"
+# Without swap, Chromium + Node + Openbox + the OS will OOM-kill
+# the browser within minutes. 1GB on the SD card is the smallest
+# size we trust; raise to 2GB if you see lockups under heavy use.
+step "7/8  Provisioning 1GB swap file"
+
+SWAP_FILE="/swapfile-calendar"
+SWAP_SIZE_MB=1024
+
+if swapon --show=NAME --noheadings | grep -q "^${SWAP_FILE}$"; then
+  ok "Swap file already active — skipping"
+else
+  if [ ! -f "$SWAP_FILE" ]; then
+    info "Allocating ${SWAP_SIZE_MB}MB at $SWAP_FILE (this can take ~30s on a slow SD card)..."
+    sudo fallocate -l "${SWAP_SIZE_MB}M" "$SWAP_FILE" 2>/dev/null \
+      || sudo dd if=/dev/zero of="$SWAP_FILE" bs=1M count="$SWAP_SIZE_MB" status=none
+    sudo chmod 600 "$SWAP_FILE"
+    sudo mkswap "$SWAP_FILE" >/dev/null
+  fi
+  sudo swapon "$SWAP_FILE"
+
+  # Persist across reboots
+  if ! grep -q "^${SWAP_FILE} " /etc/fstab; then
+    echo "${SWAP_FILE} none swap sw 0 0" | sudo tee -a /etc/fstab >/dev/null
+  fi
+  ok "Swap file active and persisted in /etc/fstab"
+fi
+
+# Lower swappiness — prefer keeping pages in RAM until truly under pressure.
+# 60 (default) trades performance for cache; 10 keeps Chromium snappier on Zero 2 W.
+if ! grep -q "^vm.swappiness" /etc/sysctl.conf; then
+  echo "vm.swappiness=10" | sudo tee -a /etc/sysctl.conf >/dev/null
+  sudo sysctl -q vm.swappiness=10
+  ok "Swappiness set to 10 (was 60)"
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 8. CHROMIUM KIOSK
+# ─────────────────────────────────────────────────────────────
+step "8/8  Configuring Chromium kiosk"
 
 # Openbox autostart: disable screensaver, hide cursor, launch Chromium
 cat > "$OPENBOX_CONFIG/autostart" <<EOF
@@ -234,7 +278,15 @@ xset -dpms
 # Hide mouse cursor after 0.5 seconds of inactivity
 unclutter -idle 0.5 -root &
 
-# Launch Chromium in kiosk mode
+# Launch Chromium in kiosk mode.
+# Memory flags below are specific to the Pi Zero 2 W (512MB RAM):
+#   --memory-pressure-off     — stop Chromium from auto-killing tabs at first sign
+#                               of memory pressure (we only have one tab anyway)
+#   --disable-dev-shm-usage   — write shm to /tmp instead of the tiny /dev/shm
+#                               tmpfs that defaults to ~64MB on the Zero
+#   --disable-gpu-vsync       — single-core GPU → vsync stalls compositing
+#   --process-per-site        — collapse same-origin frames into one renderer
+#                               process (one less ~80MB renderer)
 chromium \\
   --kiosk \\
   --noerrdialogs \\
@@ -243,6 +295,10 @@ chromium \\
   --disable-restore-session-state \\
   --touch-events=enabled \\
   --check-for-update-interval=31536000 \\
+  --memory-pressure-off \\
+  --disable-dev-shm-usage \\
+  --disable-gpu-vsync \\
+  --process-per-site \\
   $KIOSK_URL &
 EOF
 ok "Openbox autostart written"
@@ -275,7 +331,7 @@ fi
 # ── Summary ───────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}  Phase 1 Complete ✓${NC}"
+echo -e "${GREEN}${BOLD}  Phase 1 Complete ✓ (Pi Zero 2 W variant)${NC}"
 echo -e "${GREEN}${BOLD}════════════════════════════════════════${NC}"
 echo ""
 echo -e "  Calendars   →  $CALENDAR_DIR"
