@@ -2,6 +2,21 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ Branch: `pi-zero-2w` — Ultra-Budget Variant
+
+This branch targets the **Raspberry Pi Zero 2 W** (512MB RAM, 1GHz quad-core ARMv8) instead of the Pi 5. It is a parallel variant of `main`, not intended to merge back. Differences from `main`:
+
+| Area | Change | Why |
+|---|---|---|
+| `scripts/setup.sh` | Provisions a 1GB swap file, sets `vm.swappiness=10`, adds `--memory-pressure-off`, `--disable-dev-shm-usage`, `--disable-gpu-vsync`, `--process-per-site` to Chromium kiosk | 512MB RAM cannot host Chromium + Node + Openbox + the OS without swap; the kiosk would be OOM-killed within minutes |
+| `app/public/index.html` | Events poll: 60s → 5min · Weather poll: 15min → 60min · Status poll: 30s → 60s | Single-core ARMv8 cannot afford a per-minute month-grid rerender |
+| `app/src/server.js` | WMO weather code → emoji+label lookup moved server-side; client receives ready-to-render strings | Removes ~1KB of JS and per-render lookup work from the browser |
+| `hardware/options.md` | Adds Pi Zero 2 W as Option D + a $120–160 "Ultra-Budget Build" combo | Documents the new target hardware |
+
+Trade-offs the user has accepted: ~45–90s boot to first paint, occasional jank when opening the Add Event modal under memory pressure, ≤7" display ceiling, and no 5GHz Wi-Fi. **`main` remains the canonical Pi 5 build.**
+
+---
+
 ## Project Overview
 
 A physical wall-mounted family calendar with a touchscreen display, running on a Raspberry Pi. Syncs bidirectionally with Apple Calendar (iCloud) so family members can add and view events from their iPhones or directly on the wall display.
@@ -40,7 +55,7 @@ calendar/
 
 | Area | Decision |
 |---|---|
-| Hardware | Raspberry Pi 5 (4GB) + 10"–21.5" capacitive IPS touchscreen |
+| Hardware | Raspberry Pi Zero 2 W (512MB) + ≤7" capacitive IPS touchscreen (this branch); main targets Pi 5 + 10"–21.5" |
 | OS | Raspberry Pi OS Lite (64-bit) |
 | Cloud sync | iCloud CalDAV — direct, no intermediary server |
 | Phone app | Native Apple Calendar (no new app for family members) |
@@ -85,7 +100,7 @@ A Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
 - Events color-coded by calendar (Family=blue, Kids=green, Personal=amber, Work=red)
 - Left/right navigation; "+N more" overflow links
 - Right-side day panel (open by default): shows selected day broken into hour slots with a red now-line; click any day cell to switch the panel to that day; Today button resets to current day
-- Auto-polls `GET /api/events` every 60 seconds
+- Auto-polls `GET /api/events` every 5 minutes (slowed from `main`'s 60s — see branch banner)
 
 ### Phase 3 — Event Creation from Pi ✅ Complete
 **Backend (`POST /api/events`)**

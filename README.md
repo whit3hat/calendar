@@ -4,6 +4,17 @@
 
 No subscriptions. No new apps for your family. No cloud middlemen. Just a Pi on your wall that stays in perfect sync with the Apple Calendar your family already uses. 🏡
 
+> ## 🪶 You are on the `pi-zero-2w` branch
+>
+> This branch targets the **Raspberry Pi Zero 2 W** (512MB RAM, ~$15) instead of the Pi 5. It ships an ultra-budget build that comes in around **$120–160 total** with the trade-offs spelled out below. If you want the recommended Pi 5 build, switch to [`main`](../../tree/main).
+>
+> **What changes vs. `main`:**
+> - `setup.sh` provisions a 1GB swap file (mandatory at 512MB) and adds Chromium memory flags to keep the kiosk from being OOM-killed
+> - Client poll intervals are slower (events: 60s → 5min, weather: 15min → 60min) so a single-core ARMv8 isn't constantly rerendering the month grid
+> - WMO weather lookups are resolved server-side, so the browser ships less JS
+>
+> **What you're trading away:** ~45–90 seconds to first paint after boot (vs. ~15 seconds on Pi 5), occasional jank under memory pressure when opening the Add Event modal, and a practical display ceiling around 7" (FullCalendar at 1920×1080 strains the VideoCore IV).
+
 ---
 
 ## ✨ What It Does
@@ -43,13 +54,13 @@ No subscriptions. No new apps for your family. No cloud middlemen. Just a Pi on 
 
 ## 🛠️ Hardware
 
-| Component | Recommended | Notes |
-|-----------|------------|-------|
-| 🖥️ **Single-board computer** | Raspberry Pi 5 (4GB) | Pi 4 also works |
-| 📺 **Display** | 10"–21.5" capacitive IPS touchscreen | HDMI + USB touch; portrait or landscape |
-| 🔌 **Power** | Official Pi 5 USB-C PSU (27W) | Stable power = stable kiosk |
-| 💾 **Storage** | 32GB+ A2-rated microSD | Faster boot, better reliability |
-| 🧲 **Mounting** | VESA mount + wall bracket | Or a picture frame, or just some tape |
+| Component | Recommended (this branch) | Notes |
+|-----------|---------------------------|-------|
+| 🖥️ **Single-board computer** | Raspberry Pi **Zero 2 W** (512MB) | The `main` branch targets Pi 5; this branch is tuned for the Zero 2 W |
+| 📺 **Display** | ≤7" capacitive IPS touchscreen | HDMI + USB touch; mini-HDMI → HDMI adapter required |
+| 🔌 **Power** | Official Pi Zero USB Micro-B PSU | Zero 2 W only draws ~1.5–2.5W typical |
+| 💾 **Storage** | 32GB+ high-endurance microSD | High-endurance is more important than capacity here — swap lives on the SD card |
+| 🧲 **Mounting** | 3D-printed Zero-sized frame | Or a small picture frame, or just some tape |
 
 **All family members need to use iPhone** (iCloud sync is Apple-only). If you have a mixed Android/iPhone household, this project is not a good fit.
 
@@ -110,7 +121,7 @@ calendar/
 
 Before you begin, you'll need:
 
-1. **A Raspberry Pi** (Pi 4 or Pi 5) with a fresh install of **Raspberry Pi OS Lite (64-bit)**
+1. **A Raspberry Pi Zero 2 W** with a fresh install of **Raspberry Pi OS Lite (64-bit)** — required for arm64 Node.js. The 32-bit ARMv6 image will not work.
 2. **A touchscreen display** connected via HDMI + USB
 3. **An iCloud App-Specific Password** — generate one at [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords
 4. **At least one calendar** already set up in Apple Calendar on your iPhone (iCloud can't create new calendar folders from vdirsyncer — only from an iPhone or iCloud.com)
