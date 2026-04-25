@@ -1681,12 +1681,17 @@
       calendarInstance.render();
       openPanel(); // show today's panel by default
 
-      setInterval(() => calendarInstance.refetchEvents(), 60000);
-      setInterval(updateStatus, 30000);
+      // Pi Zero 2 W: poll less often to avoid hammering the single-core CPU.
+      // Events refetch every 5 min (was 60s); status text every 60s (was 30s).
+      // vdirsyncer's own cron is 5 min, so we never miss a real iCloud change.
+      setInterval(() => calendarInstance.refetchEvents(), 5 * 60 * 1000);
+      setInterval(updateStatus, 60000);
 
-      // Weather — load now and refresh every 15 minutes
+      // Weather — load now and refresh every 60 minutes (was 15 min).
+      // The server cache is also 15 min, so faster client polling never
+      // produced fresher data anyway — just more browser work.
       loadWeather();
-      setInterval(loadWeather, 15 * 60 * 1000);
+      setInterval(loadWeather, 60 * 60 * 1000);
 
       // Sleep schedule — check now and then every minute
       checkSleepSchedule();
