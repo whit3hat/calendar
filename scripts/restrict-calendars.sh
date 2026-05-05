@@ -31,6 +31,12 @@
 
 set -euo pipefail
 
+# pipx installs vdirsyncer to ~/.local/bin and setup.sh appends that
+# to PATH via .bashrc. But SSH login shells read .bash_profile (not
+# .bashrc) when both exist, so the PATH addition is invisible from a
+# fresh SSH session. Add the directory ourselves to be safe.
+export PATH="$HOME/.local/bin:$PATH"
+
 # ── Colours / helpers ────────────────────────────────────────
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -110,7 +116,11 @@ rm -rf "$PAIR_STATUS_DIR"
 
 # `yes yes` answers every "Create collection?" prompt with the literal
 # string "yes" (vdirsyncer requires the full word, not just "y").
-yes yes | vdirsyncer discover family_calendar || abort "discover failed — check credentials and network."
+# The subshell with `|| true` masks the SIGPIPE exit `yes` takes when
+# vdirsyncer closes its stdin on completion — without it, pipefail would
+# report 141 for the whole pipeline and we'd falsely abort even though
+# discover succeeded.
+(yes yes 2>/dev/null || true) | vdirsyncer discover family_calendar || abort "discover failed — check credentials and network."
 vdirsyncer metasync family_calendar || warn "metasync had issues — displaynames may be incomplete."
 
 # ── 3. Build UUID → displayname map from local directories ───
@@ -186,7 +196,7 @@ ok "Config updated"
 # config — without this, sync can complain about "unknown collection".
 step "Re-discovering and syncing the chosen calendars"
 rm -rf "$PAIR_STATUS_DIR"
-yes yes | vdirsyncer discover family_calendar || abort "discover failed against new config."
+(yes yes 2>/dev/null || true) | vdirsyncer discover family_calendar || abort "discover failed against new config."
 vdirsyncer sync || abort "sync failed — check ~/.local/share/vdirsyncer/sync.log"
 vdirsyncer metasync family_calendar || warn "metasync warnings (non-fatal)."
 ok "Sync complete"
