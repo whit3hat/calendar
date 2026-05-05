@@ -13,7 +13,7 @@ No subscriptions. No new apps for your family. No cloud middlemen. Just a Pi on 
 > - Client poll intervals are slower (events: 60s → 5min, weather: 15min → 60min) so a single-core ARMv8 isn't constantly rerendering the month grid
 > - WMO weather lookups are resolved server-side, so the browser ships less JS
 >
-> **What you're trading away:** ~45–90 seconds to first paint after boot (vs. ~15 seconds on Pi 5), occasional jank under memory pressure when opening the Add Event modal, and a practical display ceiling around 7" (FullCalendar at 1920×1080 strains the VideoCore IV).
+> **What you're trading away:** ~45–90 seconds to first paint after boot (vs. ~15 seconds on Pi 5), occasional jank under memory pressure when opening the Add Event modal, and a practical *resolution* ceiling around 1280×800 (FullCalendar at 1920×1080 strains the VideoCore IV; 1280×800 on a 10" panel renders comfortably).
 
 ---
 
@@ -52,15 +52,20 @@ No subscriptions. No new apps for your family. No cloud middlemen. Just a Pi on 
 
 ---
 
-## 🛠️ Hardware
+## 🛠️ Hardware — As Ordered
 
-| Component | Recommended (this branch) | Notes |
-|-----------|---------------------------|-------|
-| 🖥️ **Single-board computer** | Raspberry Pi **Zero 2 W** (512MB) | The `main` branch targets Pi 5; this branch is tuned for the Zero 2 W |
-| 📺 **Display** | ≤7" capacitive IPS touchscreen | HDMI + USB touch; mini-HDMI → HDMI adapter required |
-| 🔌 **Power** | Official Pi Zero USB Micro-B PSU | Zero 2 W only draws ~1.5–2.5W typical |
-| 💾 **Storage** | 32GB+ high-endurance microSD | High-endurance is more important than capacity here — swap lives on the SD card |
-| 🧲 **Mounting** | 3D-printed Zero-sized frame | Or a small picture frame, or just some tape |
+This is the actual bill of materials I'm building this from. Total spend lands in the **$120–160** range. The links go to the exact Amazon listings — but any equivalent part will work; nothing here is brand-locked.
+
+| Component | What I'm using | Notes |
+|-----------|---------------|-------|
+| 🖥️ **SBC + case + Pi PSU** | [CanaKit Raspberry Pi Zero 2 W Basic Kit](https://www.amazon.com/dp/B0CT1Y3CQJ) | Bundles the Zero 2 W board, the official Raspberry Pi case (with three interchangeable lids), and the official 5V/2.5A micro-USB PSU — three slots filled in one purchase. The mini-HDMI adapter is **not** in this particular kit; see below. |
+| 📺 **Display** | [ELECROW 10.1" 1280×800 IPS capacitive touchscreen](https://www.amazon.com/dp/B0BHHQLKPY) | HDMI for video, USB for touch, ships with a stand. 1280×800 sits comfortably within the VideoCore IV's render budget. The 16:10 aspect ratio gives slightly more vertical real estate than a 16:9 panel. |
+| 🔌 **Mini-HDMI → HDMI adapter** | [JHAOUS gold-plated mini-HDMI to HDMI adapter](https://www.amazon.com/dp/B0F1Y8DLKV) | Required because the Zero 2 W has mini-HDMI and the Elecrow screen takes full-size HDMI. Any equivalent adapter works — I just picked the cheapest one on Amazon. |
+| 💾 **Storage** | A 32GB+ microSD card you already have | High-endurance is more important than raw capacity — swap lives on the SD card on this build, so writes will be frequent. |
+| 🔌 **Screen power supply** | Any standard USB-A wall adapter (5V / 2A or higher) — likely already in your drawer | The screen has a dedicated `POWER` micro-USB socket separate from the touch socket. Box ships with two USB-A to micro-USB cables: one is used here (screen `POWER` → wall adapter). An old iPad 12W brick is ideal; an iPhone 5W cube is borderline. |
+| 🔗 **HDMI cable (adapter → screen)** | ✅ Included with the screen | Standard full-size HDMI-to-HDMI; plugs into the JHAOUS adapter on the Pi side. |
+| 👆 **Touch data cable (Pi → screen)** | [CableCreation 8 in (20 cm) micro-USB to micro-USB OTG cable](https://www.amazon.com/dp/B01M5GZ3N0) | Both the Pi's data port and the screen's `TOUCH` port are micro-USB. Must be labeled **OTG** — the OTG end (ID pin grounded) plugs into the Pi to declare the Pi as USB host. A regular micro-USB-to-micro-USB cable will *not* work; the Pi will fall back to device mode and touch will never enumerate. 8 in is intentionally short because the Pi mounts directly to the back of the screen — no service-access slack needed. The other USB-A to micro-USB cable in the screen's box is a spare in this build. |
+| 🧲 **Mounting** | TBD — the Elecrow stand works for desk use; wall mount needs a frame or VESA bracket | The included stand is a good "trial run" before committing to a permanent wall mount. |
 
 **All family members need to use iPhone** (iCloud sync is Apple-only). If you have a mixed Android/iPhone household, this project is not a good fit.
 
@@ -121,24 +126,99 @@ calendar/
 
 Before you begin, you'll need:
 
-1. **A Raspberry Pi Zero 2 W** with a fresh install of **Raspberry Pi OS Lite (64-bit)** — required for arm64 Node.js. The 32-bit ARMv6 image will not work.
+1. **A Raspberry Pi Zero 2 W** with a microSD card (you'll flash it in Step 0 below). The OS must be **Raspberry Pi OS Lite (64-bit)** — required for arm64 Node.js. The 32-bit ARMv6 image will not work.
 2. **A touchscreen display** connected via HDMI + USB
-3. **An iCloud App-Specific Password** — generate one at [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords
+3. **An iCloud App-Specific Password** — see the walkthrough in the next section. You'll need it during Step 2.
 4. **At least one calendar** already set up in Apple Calendar on your iPhone (iCloud can't create new calendar folders from vdirsyncer — only from an iPhone or iCloud.com)
-
-> 💡 **Not sure what an App-Specific Password is?** It's a special one-time password Apple lets you generate for third-party apps that need to access iCloud. Your real Apple ID password never leaves Apple's servers.
 
 ---
 
-### Step 1 — Clone the repo onto the Pi
+### Generating an iCloud App-Specific Password
 
-SSH into your Pi or open a terminal:
+This is the credential `vdirsyncer` uses to read and write your iCloud calendars over CalDAV. You can do this at any time before Step 2 (the SD card flashing in Step 0 is a good moment to start it in another tab). Apple shows the generated password **only once** — copy it immediately and either paste it into `setup.sh` right away or stash it in a password manager.
+
+1. Open [**appleid.apple.com**](https://appleid.apple.com) and sign in with the Apple ID that owns the iCloud calendars you want on the wall.
+2. Approve the 2FA prompt that appears on your iPhone, then enter the 6-digit code on the website.
+3. In the left sidebar, click **Sign-In and Security**.
+4. Scroll down and click **App-Specific Passwords**.
+5. Click the **➕** button (labeled something like "Generate an app-specific password").
+6. Enter a memorable label — e.g. `Pi Calendar` or `vdirsyncer`. The label is purely for your future reference if you ever need to revoke it from the same screen; it has no functional meaning.
+7. Click **Create**. Apple will re-prompt you for your real Apple ID password (the last time you'll need it).
+8. The dialog displays a password in the format `xxxx-xxxx-xxxx-xxxx` (16 lowercase letters in 4 groups of 4, dashes included). **Copy it immediately.** Once you close the dialog, you cannot view it again — your only recourse if you lose it is to delete and regenerate.
+9. Paste it into `setup.sh`'s iCloud-password prompt during Step 2. vdirsyncer stores it on the Pi at `~/.config/vdirsyncer/config` with `chmod 600` so you only ever paste it once.
+
+> 💡 **Why an app-specific password instead of your real one?** Apple won't let third-party apps authenticate with your real Apple ID password — that would bypass 2FA. App-specific passwords are scoped credentials: CalDAV / IMAP access only, individually revocable without disturbing your main account, and can't be used to log into iCloud.com or buy things in the App Store. If the Pi is ever stolen or compromised, you revoke this one credential from the same screen and the wall display loses access — your main account is unaffected.
+>
+> ⚠️ **Don't see "App-Specific Passwords" in the menu?** Your Apple ID needs **two-factor authentication enabled**. Apple has been defaulting to 2FA for years, so this is rare — but if you're on a legacy single-factor account, enable 2FA first (same Sign-In and Security page) and the option will appear.
+
+---
+
+### Step 0 — Flash the SD card
+
+Done **on your Mac (or PC)**, before you ever plug the Pi in. The Imager tool below lets you pre-configure Wi-Fi, SSH, hostname, and timezone, so the Pi can boot completely headless — no keyboard or monitor required for setup.
+
+1. **Install Raspberry Pi Imager** from [raspberrypi.com/software](https://www.raspberrypi.com/software/) — free, official, runs on macOS / Windows / Linux.
+2. **Insert your microSD card** into your computer (an SD-to-USB adapter works fine).
+3. **Open Imager → "CHOOSE DEVICE"** → select **Raspberry Pi Zero 2 W**.
+4. **"CHOOSE OS"** → **Raspberry Pi OS (other)** → **Raspberry Pi OS Lite (64-bit)**.
+   - ⚠️ Do **not** pick the regular desktop image — we install our own minimal kiosk environment via `setup.sh`, and a desktop install wastes the Zero 2 W's limited RAM.
+   - ⚠️ Do **not** pick the 32-bit (ARMv6) image — Node.js 22 LTS only ships arm64 binaries.
+5. **"CHOOSE STORAGE"** → select your SD card.
+6. **"NEXT"** → when Imager asks "Would you like to apply OS customisation settings?" click **EDIT SETTINGS**. (Or press `Cmd+Shift+X` / `Ctrl+Shift+X` at any point to open the same panel.) Fill in:
+
+   | Field | Value | Why |
+   |-------|-------|-----|
+   | **Hostname** | `calendar` | Your Pi will be reachable at `calendar.local` from your Mac via mDNS |
+   | **Username + password** | Pick a username (e.g. `pi`) and a strong password | `setup.sh` runs as this user — must not be `root` |
+   | **Configure wireless LAN** | Your Wi-Fi SSID + password | The Zero 2 W is **2.4 GHz only** — no 5 GHz |
+   | **Wireless LAN country** | Your country code (e.g. `US`) | Required for the Wi-Fi radio to enable in some regions |
+   | **Locale → Time zone** | Your local zone (e.g. `America/Chicago`) | ⚠️ Critical — events use floating local time, so the Pi must agree with everyone's iPhones about what "3 PM" means |
+   | **Services → Enable SSH** | ✅ checked, with password auth (or paste your public key) | This is how you'll connect from your Mac for Step 1 onward |
+
+7. **"SAVE" → "YES" to apply customisation → "YES" to overwrite the SD card.** Wait ~5 minutes for the write + verify pass to finish.
+8. **Eject the SD card**, slide it into the Pi, plug in power, and wait ~60 seconds for first boot.
+9. **From your Mac**, SSH in:
+
+   ```bash
+   ssh <username>@calendar.local
+   ```
+
+   If `calendar.local` doesn't resolve (some routers don't forward mDNS), find the Pi's IP from your router's admin page and `ssh <username>@<ip>` directly.
+
+Once you're connected over SSH, continue with Step 1.
+
+---
+
+### Step 1 — Clone the repo and pick your branch
+
+You should already be SSH'd into the Pi from Step 0. **Raspberry Pi OS Lite ships without `git` installed** (the desktop variant includes it, but Lite is intentionally minimal), so install it first, then clone:
 
 ```bash
+sudo apt update
+sudo apt install -y git
+
 cd ~
-git clone https://github.com/whit3hat/calendar.git calendar-app
+git clone https://github.com/whit3hat/calendar.git calendar-app   # creates ~/calendar-app/
 cd calendar-app
 ```
+
+> 💡 `setup.sh` itself installs git as part of its dependency step, but that's circular — you need git to clone this repo to *get* `setup.sh` in the first place. So git is the one prerequisite that has to be installed manually before everything else.
+
+**Now check out the branch that matches your hardware.** This repo maintains two parallel deployments — each one tunes `setup.sh`, the Chromium kiosk flags, and the client polling intervals to its target SBC:
+
+| Hardware | Branch | What you get |
+|----------|--------|--------------|
+| Raspberry Pi 5 (4GB / 8GB) | `main` | Default after clone. Recommended build. Full 1920×1080, ~15s boot to first paint. |
+| Raspberry Pi Zero 2 W (512MB) | `pi-zero-2w` | Ultra-budget build. 1GB swap file, Chromium memory flags, slower polls (events 60s → 5min, weather 15min → 60min), server-side WMO weather lookup. Capped around 1280×800. |
+
+```bash
+# Deploying on a Pi Zero 2 W? Switch to that branch now:
+git checkout pi-zero-2w
+
+# Deploying on a Pi 5? You're already on `main` after the clone — skip the line above.
+```
+
+> ⚠️ **The two branches are deliberately separate and not designed to merge back together.** Running the wrong branch on your Pi will fail painfully — `main` on a Zero 2 W OOM-kills Chromium within minutes (no swap file provisioned), and `pi-zero-2w` on a Pi 5 needlessly throttles polling and ships you a less responsive UI on hardware that can handle the faster cadence. Always verify with `git branch` before running `setup.sh`.
 
 ---
 
