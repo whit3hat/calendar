@@ -25,9 +25,13 @@
 #   3. Installs vdirsyncer (iCloud CalDAV sync tool)
 #   4. Configures vdirsyncer with your iCloud credentials
 #   5. Discovers your iCloud calendars and runs initial sync
-#   6. Sets up a 1GB swap file (Pi Zero 2 W only has 512MB RAM)
-#   7. Sets up Chromium kiosk (auto-launches on every boot)
-#   8. Adds a cron job to sync calendars every 5 minutes
+#   6. Adds a cron job to sync calendars every 5 minutes
+#   7. Sets up a 1GB swap file (Pi Zero 2 W only has 512MB RAM)
+#   8. Installs a systemd service so the calendar web app
+#      auto-starts on boot and auto-restarts on crash
+#   9. Sets up Chromium kiosk (auto-launches on every boot,
+#      with the wrapper-bypass + GPU fallback fixes the
+#      VideoCore IV needs to render reliably)
 # ================================================================
 
 set -e  # Exit immediately on any error
@@ -264,11 +268,53 @@ if ! grep -q "^vm.swappiness" /etc/sysctl.conf; then
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 8. CHROMIUM KIOSK
+# 8. SYSTEMD SERVICE for the calendar web app
 # ─────────────────────────────────────────────────────────────
-step "8/8  Configuring Chromium kiosk"
+# Without this, the Node.js Express server has no supervisor.
+# If it crashes (or never starts after a reboot), the kiosk
+# loads localhost:8080 and gets a connection-refused page that
+# Chromium won't auto-retry. A systemd unit gives us start-on-
+# boot, restart-on-crash, and structured logs via journalctl.
+step "8/9  Installing systemd service for the calendar web app"
 
-# Openbox autostart: disable screensaver, hide cursor, launch Chromium
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SERVICE_TEMPLATE="$REPO_ROOT/systemd/calendar.service"
+SERVICE_DEST="/etc/systemd/system/calendar.service"
+
+[ -f "$SERVICE_TEMPLATE" ] || abort "Service template not found at $SERVICE_TEMPLATE"
+
+# Substitute __USER__ and __APP_DIR__ tokens so the unit matches
+# this Pi's user and install path. We pipe through sudo tee
+# rather than redirecting because the destination is root-owned.
+sed -e "s|__USER__|$USER|g" -e "s|__APP_DIR__|$APP_DIR|g" "$SERVICE_TEMPLATE" \
+  | sudo tee "$SERVICE_DEST" > /dev/null
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now calendar.service >/dev/null
+ok "calendar.service installed and started ($(systemctl is-active calendar.service))"
+
+# ─────────────────────────────────────────────────────────────
+# 9. CHROMIUM KIOSK
+# ─────────────────────────────────────────────────────────────
+step "9/9  Configuring Chromium kiosk"
+
+# Openbox autostart: disable screensaver, hide cursor, launch Chromium.
+#
+# Several Pi Zero 2 W-specific fixes are baked in below — see the inline
+# comments inside the heredoc. The short version of why each exists:
+#   - profile wipe at session start: kills "ghost session-restore" tabs
+#     that accumulate across crashed boots and produce a white-screen
+#     failure mode where Chromium never paints.
+#   - wait-loop on $KIOSK_URL: avoids a boot race where Chromium loads
+#     before the Node.js calendar service is ready and ends up stuck on
+#     ERR_CONNECTION_REFUSED with no auto-retry.
+#   - /usr/lib/chromium/chromium (not the 'chromium' wrapper): bypasses
+#     /etc/chromium.d/* which prepends --enable-gpu-rasterization and
+#     --use-angle=gles, both of which conflict with our GPU fallback.
+#   - --disable-gpu + --use-gl=swiftshader: VideoCore IV advertises GLES2
+#     only; Chromium 120+ expects GLES3 for compositing. SwiftShader is
+#     Google's CPU OpenGL ES 3.0 implementation — produces real paint
+#     output without a real GPU.
 cat > "$OPENBOX_CONFIG/autostart" <<EOF
 # Disable screen blanking and power management
 xset s off
@@ -278,16 +324,44 @@ xset -dpms
 # Hide mouse cursor after 0.5 seconds of inactivity
 unclutter -idle 0.5 -root &
 
-# Launch Chromium in kiosk mode.
-# Memory flags below are specific to the Pi Zero 2 W (512MB RAM):
-#   --memory-pressure-off     — stop Chromium from auto-killing tabs at first sign
-#                               of memory pressure (we only have one tab anyway)
-#   --disable-dev-shm-usage   — write shm to /tmp instead of the tiny /dev/shm
-#                               tmpfs that defaults to ~64MB on the Zero
-#   --disable-gpu-vsync       — single-core GPU → vsync stalls compositing
-#   --process-per-site        — collapse same-origin frames into one renderer
-#                               process (one less ~80MB renderer)
-chromium \\
+# Wipe Chromium profile state at every kiosk session start.
+# Each Chromium crash leaves session-restore breadcrumbs that get
+# auto-restored on next launch, even with --disable-restore-session-state.
+# The ghost tabs they produce never load, leaving a white screen.
+# A kiosk has no useful per-session state to preserve, so wiping is safe.
+rm -rf "\$HOME/.config/chromium" "\$HOME/.cache/chromium" 2>/dev/null
+
+# Wait until the calendar web app is actually serving HTTP before launching
+# Chromium. systemd brings up calendar.service in parallel with X startup,
+# so without this loop Chromium can win the race and load
+# ERR_CONNECTION_REFUSED — which it then never auto-retries.
+echo "Waiting for calendar server on $KIOSK_URL..." >> /tmp/kiosk.log
+until curl -s -o /dev/null $KIOSK_URL/; do
+  sleep 1
+done
+echo "Server is up — launching Chromium." >> /tmp/kiosk.log
+
+# Launch Chromium in kiosk mode. Note: /usr/lib/chromium/chromium is the
+# binary itself, bypassing /usr/bin/chromium (the Debian wrapper script
+# that sources /etc/chromium.d/* and would inject conflicting GPU flags).
+#
+# Pi Zero 2 W-specific flags:
+#   --disable-gpu             VideoCore IV can't drive Chromium 120+'s
+#   --use-gl=swiftshader      compositor (GLES3 unsupported); fall back
+#                             to Google's CPU OpenGL implementation.
+#   --memory-pressure-off     stop Chromium auto-killing tabs at the
+#                             first sign of memory pressure (we have
+#                             exactly one tab — discarding it is fatal).
+#   --disable-dev-shm-usage   write shm to /tmp instead of the tiny
+#                             /dev/shm tmpfs (~64MB on the Zero).
+#   --disable-gpu-vsync       single-core GPU; vsync stalls compositing.
+#   --process-per-site        collapse same-origin frames into one
+#                             renderer process (saves ~80MB).
+#   --remote-debugging-port   expose CDP on :9222 so we can attach Chrome
+#                             DevTools from a Mac via 'ssh -L 9222:...'
+#                             when the kiosk misbehaves. No security risk
+#                             on a wall-mounted device on a home LAN.
+/usr/lib/chromium/chromium \\
   --kiosk \\
   --noerrdialogs \\
   --disable-infobars \\
@@ -296,9 +370,12 @@ chromium \\
   --touch-events=enabled \\
   --check-for-update-interval=31536000 \\
   --memory-pressure-off \\
+  --disable-gpu \\
+  --use-gl=swiftshader \\
   --disable-dev-shm-usage \\
   --disable-gpu-vsync \\
   --process-per-site \\
+  --remote-debugging-port=9222 \\
   $KIOSK_URL &
 EOF
 ok "Openbox autostart written"

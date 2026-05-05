@@ -8,7 +8,9 @@ This branch targets the **Raspberry Pi Zero 2 W** (512MB RAM, 1GHz quad-core ARM
 
 | Area | Change | Why |
 |---|---|---|
-| `scripts/setup.sh` | Provisions a 1GB swap file, sets `vm.swappiness=10`, adds `--memory-pressure-off`, `--disable-dev-shm-usage`, `--disable-gpu-vsync`, `--process-per-site` to Chromium kiosk | 512MB RAM cannot host Chromium + Node + Openbox + the OS without swap; the kiosk would be OOM-killed within minutes |
+| `scripts/setup.sh` | Provisions a 1GB swap file, sets `vm.swappiness=10`, installs a `calendar.service` systemd unit so the Node app survives reboots/crashes, and writes an openbox autostart that wipes Chromium profile state, waits for the calendar server to respond on :8080, then launches `/usr/lib/chromium/chromium` (bypassing the Debian wrapper) with `--disable-gpu --use-gl=swiftshader` plus the memory flags `--memory-pressure-off`, `--disable-dev-shm-usage`, `--disable-gpu-vsync`, `--process-per-site`, and `--remote-debugging-port=9222` | 512MB RAM cannot host Chromium + Node + Openbox + the OS without swap; the kiosk would be OOM-killed within minutes. The Debian chromium wrapper prepends `--enable-gpu-rasterization --use-angle=gles` from `/etc/chromium.d/*`, which fights the SwiftShader fallback and produces a renderer that initializes but never paints — bypassing the wrapper is mandatory. The boot-time wait-loop and profile wipe address race conditions and ghost-tab failure modes seen in actual deployment. |
+| `systemd/calendar.service` | New checked-in unit template (substitutes `__USER__` and `__APP_DIR__` at install time). `setup.sh` step 8 copies it to `/etc/systemd/system/` with `sed`, `systemctl daemon-reload`s, then `enable --now` | Without a service supervisor, the Node app dies on first crash and the kiosk loads connection-refused. systemd gives auto-start on boot, auto-restart on crash, and structured logs via `journalctl -u calendar.service` |
+| `app/public/vendor/fullcalendar/` | Vendored FullCalendar v6.1.15 (282KB minified). `index.html` references `/vendor/fullcalendar/index.global.min.js` instead of `cdn.jsdelivr.net`. Express's existing static middleware serves it without backend changes | First paint must not depend on outbound HTTPS. On the Pi Zero 2 W, Chromium's Happy Eyeballs preferred IPv6, the home network advertised an IPv6 prefix without a working v6 default route, and the in-flight v6 socket exceeded the renderer's per-resource budget — Chromium gave up before falling back to IPv4 and the kiosk got stuck on "Loading Calendars..." indefinitely. Vendoring eliminates that race entirely |
 | `app/public/index.html` | Events poll: 60s → 5min · Weather poll: 15min → 60min · Status poll: 30s → 60s | Single-core ARMv8 cannot afford a per-minute month-grid rerender |
 | `app/src/server.js` | WMO weather code → emoji+label lookup moved server-side; client receives ready-to-render strings | Removes ~1KB of JS and per-render lookup work from the browser |
 | `hardware/options.md` | Adds Pi Zero 2 W as Option D + a $120–160 "Ultra-Budget Build" combo | Documents the new target hardware |
@@ -39,12 +41,16 @@ calendar/
 │   └── vdirsyncer.conf        ← iCloud CalDAV config TEMPLATE (no real credentials)
 ├── scripts/
 │   └── setup.sh               ← Phase 1 setup script (run on fresh Pi)
+├── systemd/
+│   └── calendar.service       ← systemd unit template (Pi Zero 2 W branch)
 └── app/                       ← Node.js calendar app
     ├── package.json
     ├── src/
     │   └── server.js          ← Express API server
     ├── public/
-    │   └── index.html         ← FullCalendar.js frontend (all UI logic)
+    │   ├── index.html         ← FullCalendar.js frontend (all UI logic)
+    │   └── vendor/
+    │       └── fullcalendar/  ← vendored FullCalendar v6.1.15 (no CDN at runtime)
     └── data/                  ← Sample .ics files for local Mac development
         ├── Family/
         ├── Kids/
@@ -77,13 +83,15 @@ calendar/
 ## Build Phases
 
 ### Phase 1 — Pi Setup & iCloud Sync ✅ Complete
-**Script:** `scripts/setup.sh`
+**Script:** `scripts/setup.sh` (9 steps) · **Service template:** `systemd/calendar.service`
 Run on a fresh Raspberry Pi OS Lite install. Automates:
 - System update + dependency install (Node.js 22 LTS, vdirsyncer, Chromium, openbox)
 - Interactive iCloud credential prompt → writes `~/.config/vdirsyncer/config`
 - `vdirsyncer discover` + initial sync → `.ics` files land in `~/.local/share/calendar/`
 - Cron job: `*/5 * * * *` keeps calendars in sync
-- Chromium kiosk: auto-launches `http://localhost:8080` on every boot
+- 1GB swap file at `/swapfile-calendar` + `vm.swappiness=10` (mandatory at 512MB RAM)
+- `calendar.service` systemd unit: substitutes `__USER__`/`__APP_DIR__` from the template, installs to `/etc/systemd/system/`, `enable --now`. Survives reboots and auto-restarts on crash.
+- Chromium kiosk: openbox autostart wipes profile state, waits for the calendar server to respond on :8080, then launches `/usr/lib/chromium/chromium` (bypassing the Debian wrapper) with the GPU-fallback + memory flags. Auto-launches on every boot via `.bash_profile` → `startx` → `openbox-session`.
 
 ### Phase 2 — Calendar Display ✅ Complete
 A Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
