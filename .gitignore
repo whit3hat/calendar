@@ -21,3 +21,10 @@ config/vdirsyncer.conf.local
 
 # Exception: sample .ics files used for local Mac development
 !app/data/**/*.ics
+
+# Re-exclude UUID-named .ics files inside app/data/ — those are
+# auto-generated (POST /api/events writes UUID-named files, and
+# pulling from real iCloud during local dev produces them too) and
+# may contain private events. The hand-curated samples like
+# birthday-party.ics have at most one dash and stay tracked.
+app/data/**/*-*-*-*-*.ics

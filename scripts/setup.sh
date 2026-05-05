@@ -380,8 +380,28 @@ echo "Server is up — launching Chromium." >> /tmp/kiosk.log
 EOF
 ok "Openbox autostart written"
 
-# Auto-start X on TTY1 login (only if not already in a graphical session)
 BASH_PROFILE="$HOME/.bash_profile"
+
+# Ensure .bash_profile sources .bashrc on every login. Bash login
+# shells (which SSH gives you) read .bash_profile and skip .bashrc
+# entirely when both files exist — so PATH additions made by step 3
+# (~/.local/bin for pipx-installed vdirsyncer) would be invisible
+# from any SSH session without this. The unique sentinel lets us
+# add this even on Pis where the kiosk block below was already
+# written by an older setup.sh, without duplicating that block.
+if ! grep -q "calendar-bashrc-source" "$BASH_PROFILE" 2>/dev/null; then
+  cat >> "$BASH_PROFILE" <<'PROFILE'
+
+# calendar-bashrc-source: source .bashrc on login so PATH and aliases
+# defined there (e.g. pipx's ~/.local/bin) are visible to SSH sessions.
+if [ -f "$HOME/.bashrc" ]; then
+  . "$HOME/.bashrc"
+fi
+PROFILE
+  ok ".bash_profile sources .bashrc on login (PATH visible to SSH)"
+fi
+
+# Auto-start X on TTY1 login (only if not already in a graphical session)
 if ! grep -q "startx" "$BASH_PROFILE" 2>/dev/null; then
   cat >> "$BASH_PROFILE" <<'PROFILE'
 
