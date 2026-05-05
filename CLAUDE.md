@@ -40,7 +40,8 @@ calendar/
 ├── config/
 │   └── vdirsyncer.conf        ← iCloud CalDAV config TEMPLATE (no real credentials)
 ├── scripts/
-│   └── setup.sh               ← Phase 1 setup script (run on fresh Pi)
+│   ├── setup.sh               ← Phase 1 setup script (run on fresh Pi)
+│   └── restrict-calendars.sh  ← Interactive: narrow which iCloud calendars sync
 ├── systemd/
 │   └── calendar.service       ← systemd unit template (Pi Zero 2 W branch)
 └── app/                       ← Node.js calendar app
@@ -222,6 +223,12 @@ tail -f ~/.local/share/vdirsyncer/sync.log
 ```bash
 vdirsyncer discover family_calendar
 ```
+
+### Change which iCloud calendars are synced (without re-running setup.sh)
+```bash
+bash scripts/restrict-calendars.sh
+```
+Reads existing credentials from `~/.config/vdirsyncer/config`, fetches every iCloud collection's `displayname`, prompts you to pick which ones to keep, then rewrites the config using the explicit pair form (`[[pair, local_name, remote_uuid], ...]`) so local directories use friendly names like `Family/` instead of UUIDs. Backs up the prior config to `~/.config/vdirsyncer/config.bak.<timestamp>` and restarts `calendar.service` automatically.
 
 ### Test kiosk manually (without rebooting)
 ```bash
