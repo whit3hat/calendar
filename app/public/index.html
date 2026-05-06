@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Family Calendar</title>
+  <link rel="stylesheet" href="/vendor/simple-keyboard/index.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -790,6 +791,81 @@
       font-weight: 600;
       color: #cbd5e1;
     }
+
+    /* ── On-Screen Keyboard ───────────────────────────────────── */
+    /* Linux Chromium has no auto-show OSK (that's a ChromeOS feature),
+       and Pi OS Lite ships no system keyboard. We render an in-app
+       virtual keyboard at the bottom of the viewport, shown only when
+       a text input inside the Add Event modal is focused. */
+    #osk-container {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 350;             /* above modal-overlay (300) */
+      background: #0f172a;
+      border-top: 1px solid #334155;
+      padding: 0.4rem;
+      display: none;
+      user-select: none;
+    }
+
+    #osk-container.open { display: block; }
+
+    /* Override the vendored simple-keyboard default theme to match
+       the dark navy/slate palette of the rest of the app. */
+    #osk-container .hg-theme-default {
+      background: transparent;
+      font-family: inherit;
+      padding: 0;
+    }
+
+    #osk-container .hg-row {
+      margin-bottom: 0.3rem;
+    }
+    #osk-container .hg-row:last-child { margin-bottom: 0; }
+
+    #osk-container .hg-button {
+      background: #1e293b;
+      color: #f1f5f9;
+      border: 1px solid #334155;
+      border-bottom-width: 2px;
+      border-radius: 8px;
+      height: 2.5rem;
+      font-size: 1rem;
+      font-weight: 500;
+      touch-action: manipulation;
+      box-shadow: none;
+    }
+
+    #osk-container .hg-button:active,
+    #osk-container .hg-button.hg-activeButton {
+      background: #3b82f6;
+      border-color: #2563eb;
+      color: #fff;
+    }
+
+    /* Function keys (shift, backspace, enter, space) get the slate
+       background to distinguish them from the letter/number keys. */
+    #osk-container .hg-button-shift,
+    #osk-container .hg-button-bksp,
+    #osk-container .hg-button-enter,
+    #osk-container .hg-button-space {
+      background: #334155;
+    }
+
+    /* When the OSK is open, the modal anchors to the top of the
+       viewport and reserves bottom padding equal to the keyboard
+       height — otherwise the modal card sits centered, partly
+       hidden behind the keyboard. */
+    body.osk-open #modal-overlay {
+      align-items: flex-start;
+      padding-top: 0.5rem;
+      padding-bottom: 14rem;
+    }
+    body.osk-open #modal-card {
+      max-height: calc(100vh - 14.5rem);
+    }
   </style>
 </head>
 <body>
@@ -892,6 +968,14 @@
     </div>
   </div>
 
+  <!-- On-Screen Keyboard — hidden by default, shown only when a text
+       input inside the Add Event modal is focused. See OSK CSS above
+       and showOSK/hideOSK in the script block below.
+       The "osk-keyboard" class is what simple-keyboard's constructor
+       targets (it prepends "." internally and calls querySelector);
+       the "osk-container" id is what our own CSS rules use. -->
+  <div id="osk-container" class="osk-keyboard" aria-hidden="true"></div>
+
   <!-- Sleep overlay — covers screen during scheduled off hours; touch/click to temporarily wake -->
   <div id="sleep-overlay" role="presentation" aria-hidden="true">
     <span id="sleep-overlay-hint">Touch to wake</span>
@@ -935,6 +1019,7 @@
   </div>
 
   <script src="/vendor/fullcalendar/index.global.min.js"></script>
+  <script src="/vendor/simple-keyboard/index.js"></script>
   <script>
     // ── State ─────────────────────────────────────────────────────
     let allEvents    = [];
@@ -1375,6 +1460,7 @@
     function closeModal() {
       editingEventUid = null;
       document.getElementById('modal-overlay').classList.remove('open');
+      hideOSK();
     }
 
     // Pre-fill the modal from an existing FC event and switch to edit mode.
@@ -1524,6 +1610,129 @@
       }
     }
 
+    // ── On-Screen Keyboard ───────────────────────────────────────
+    // The Pi's Chromium has no auto-show OSK on Linux (that feature
+    // is ChromeOS-only) and Pi OS Lite ships no system keyboard.
+    // We use simple-keyboard, vendored under /vendor/simple-keyboard/,
+    // shown only when one of the modal's text inputs (title, notes)
+    // is focused.
+    let osk         = null;   // simple-keyboard instance
+    let oskInputEl  = null;   // currently-bound input element
+    let oskShifted  = false;  // toggled by tapping the shift key
+
+    function initOSK() {
+      // Library is exposed as window.SimpleKeyboard.default by the UMD
+      // bundle (the .default unwrap is for the ES-module-style export
+      // that simple-keyboard ships with).
+      const KeyboardClass = window.SimpleKeyboard.default || window.SimpleKeyboard;
+      // First arg is a *class name* (no CSS prefix) — simple-keyboard
+      // prepends "." internally before calling querySelector. Passing
+      // "#osk-container" produces the invalid selector ".#osk-container"
+      // and throws a SyntaxError, which would abort the rest of this
+      // DOMContentLoaded handler and prevent FullCalendar from mounting.
+      osk = new KeyboardClass('osk-keyboard', {
+        // Two-layer layout. {bksp}/{shift}/{enter}/{space} are
+        // simple-keyboard's reserved tokens — display strings are
+        // mapped below.
+        layout: {
+          default: [
+            '1 2 3 4 5 6 7 8 9 0',
+            'q w e r t y u i o p',
+            'a s d f g h j k l',
+            '{shift} z x c v b n m {bksp}',
+            '@ . , - \' {space} {enter}'
+          ],
+          shift: [
+            '! @ # $ % ^ & * ( )',
+            'Q W E R T Y U I O P',
+            'A S D F G H J K L',
+            '{shift} Z X C V B N M {bksp}',
+            '_ + : ; ? {space} {enter}'
+          ]
+        },
+        display: {
+          '{shift}': '⇧',
+          '{bksp}': '⌫',
+          '{enter}': '⏎',
+          '{space}': '␣'
+        },
+        // We're not on a system with a physical keyboard, but disabling
+        // this prevents simple-keyboard from listening to phantom keys
+        // that the OS might inject from accessibility tools.
+        physicalKeyboardHighlight: false,
+        // Don't move focus away from the bound input when the user
+        // taps a key on the virtual keyboard.
+        preventMouseDownDefault: true,
+        // Sync simple-keyboard's internal buffer to the bound input
+        // on every keystroke.
+        onChange: (input) => {
+          if (!oskInputEl) return;
+          oskInputEl.value = input;
+          // Fire a real input event so any listeners (validation, etc.)
+          // see the change as if the user had typed it.
+          oskInputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        },
+        onKeyPress: (button) => {
+          if (button === '{shift}') {
+            oskShifted = !oskShifted;
+            osk.setOptions({ layoutName: oskShifted ? 'shift' : 'default' });
+          } else if (button === '{enter}') {
+            // For single-line title input, treat Enter as "I'm done with
+            // this field" — hide the keyboard rather than submit, so the
+            // user can review the form before tapping Save.
+            // For the multi-line notes textarea, insert a newline.
+            if (oskInputEl && oskInputEl.tagName === 'TEXTAREA') {
+              const newValue = (oskInputEl.value || '') + '\n';
+              osk.setInput(newValue);
+              oskInputEl.value = newValue;
+              oskInputEl.dispatchEvent(new Event('input', { bubbles: true }));
+            } else {
+              hideOSK();
+            }
+          }
+        }
+      });
+    }
+
+    function showOSK(inputEl) {
+      if (!osk) return;
+      oskInputEl = inputEl;
+      // Sync the keyboard's internal buffer to whatever the field
+      // currently holds (e.g. when editing an existing event, the
+      // title is pre-filled).
+      osk.setInput(inputEl.value || '');
+      // Reset shift state on each new field focus.
+      oskShifted = false;
+      osk.setOptions({ layoutName: 'default' });
+      document.getElementById('osk-container').classList.add('open');
+      document.body.classList.add('osk-open');
+    }
+
+    function hideOSK() {
+      oskInputEl = null;
+      const el = document.getElementById('osk-container');
+      if (el) el.classList.remove('open');
+      document.body.classList.remove('osk-open');
+    }
+
+    // Bind focus listeners: text inputs show the OSK, other field types
+    // (date pickers, time pickers, the calendar select) hide it so the
+    // native picker has full screen space.
+    function bindOSK() {
+      const textInputs  = ['form-title', 'form-notes'];
+      const otherInputs = ['form-date', 'form-start', 'form-end', 'form-calendar', 'form-allday'];
+
+      textInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('focus', () => showOSK(el));
+      });
+
+      otherInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('focus', hideOSK);
+      });
+    }
+
     // ── Init ──────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
 
@@ -1648,6 +1857,20 @@
 
       calendarInstance.render();
       openPanel(); // show today's panel by default
+
+      // On-screen keyboard — initialized AFTER FullCalendar mounts and
+      // wrapped in try/catch so a future OSK regression cannot take the
+      // wall display down with it. This is the lesson from the
+      // .#osk-container SyntaxError that blanked the kiosk on first boot
+      // of this branch: the keyboard is a nice-to-have; the calendar
+      // display is the core feature, so it gets to run first and OSK
+      // failures are logged-and-ignored, not propagated.
+      try {
+        initOSK();
+        bindOSK();
+      } catch (err) {
+        console.error('OSK init failed (calendar still works):', err);
+      }
 
       // Pi Zero 2 W: poll less often to avoid hammering the single-core CPU.
       // Events refetch every 5 min (was 60s); status text every 60s (was 30s).
