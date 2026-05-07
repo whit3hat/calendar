@@ -15,7 +15,7 @@ This branch targets the **Raspberry Pi Zero 2 W** (512MB RAM, 1GHz quad-core ARM
 | `app/src/server.js` | WMO weather code → emoji+label lookup moved server-side; client receives ready-to-render strings | Removes ~1KB of JS and per-render lookup work from the browser |
 | `hardware/options.md` | Adds Pi Zero 2 W as Option D + a $120–160 "Ultra-Budget Build" combo | Documents the new target hardware |
 
-Trade-offs the user has accepted: ~45–90s boot to first paint, occasional jank when opening the Add Event modal under memory pressure, ≤7" display ceiling, and no 5GHz Wi-Fi. **`main` remains the canonical Pi 5 build.**
+Trade-offs the user has accepted: ~45–90s boot to first paint, occasional jank when opening the Add Event modal under memory pressure, ~1280×800 resolution ceiling (FullCalendar at 1920×1080 strains the VideoCore IV regardless of physical screen size), and no 5GHz Wi-Fi. **`main` remains the canonical Pi 5 build.**
 
 ---
 
@@ -23,7 +23,7 @@ Trade-offs the user has accepted: ~45–90s boot to first paint, occasional jank
 
 A physical wall-mounted family calendar with a touchscreen display, running on a Raspberry Pi. Syncs bidirectionally with Apple Calendar (iCloud) so family members can add and view events from their iPhones or directly on the wall display.
 
-**Current status: All six phases are complete.** Hardware is on order. Next step is deploying to the Pi when it arrives.
+**Current status: All six software phases are complete. The hardware has arrived, the Pi Zero 2 W is fully assembled, and the project is now in field-testing on real hardware.** Recent commits on this branch address issues observed in actual household use — kiosk-debug fixes folded into `setup.sh`, `.bash_profile` sourcing `.bashrc` so SSH sessions inherit pipx's `~/.local/bin`, defensive PATH and pipefail fixes in `restrict-calendars.sh`, and an in-app on-screen keyboard for the Add Event modal. Treat new bug reports as live-deployment issues, not theoretical design questions.
 
 ## Repository Structure
 
@@ -62,7 +62,7 @@ calendar/
 
 | Area | Decision |
 |---|---|
-| Hardware | Raspberry Pi Zero 2 W (512MB) + ≤7" capacitive IPS touchscreen (this branch); main targets Pi 5 + 10"–21.5" |
+| Hardware | Raspberry Pi Zero 2 W (512MB) + ≤1280×800 capacitive IPS touchscreen (this branch); main targets Pi 5 + 1920×1080 panels (10"–21.5") |
 | OS | Raspberry Pi OS Lite (64-bit) |
 | Cloud sync | iCloud CalDAV — direct, no intermediary server |
 | Phone app | Native Apple Calendar (no new app for family members) |

@@ -302,6 +302,19 @@ DISPLAY=:0 chromium-browser --kiosk http://localhost:8080
 
 ---
 
+## 🩺 Something Broken?
+
+If your wall calendar is misbehaving, the troubleshooting guide at **[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)** walks through every common failure mode — from *"the screen is just white"* to *"events from my iPhone aren't showing up"* — with the exact diagnostic commands and fixes for each, organized by symptom.
+
+The 30-second cheatsheet at the top of that doc covers about 90% of issues with four commands. Beyond that, it documents:
+
+- 📂 Where every log lives (calendar app, vdirsyncer, cron, kiosk launcher, X server)
+- 🔍 The **[Chrome DevTools workflow](docs/TROUBLESHOOTING.md#-chrome-devtools-the-secret-weapon)** — `ssh -L 9222:localhost:9222 user@calendar.local` → `chrome://inspect` from your Mac. By far the most powerful debug tool in this whole project, and it's already wired into the kiosk autostart.
+- 🐀 Memory and swap pressure on the 512MB Zero 2 W (when reboot fixes it vs. when something deeper is wrong)
+- 🆘 The nuclear "wipe and re-run setup.sh" sequence for when nothing else works
+
+---
+
 ## 💻 Local Development (Mac)
 
 You don't need a Pi to develop on this project. Sample `.ics` files in `app/data/` simulate real calendar data:
@@ -418,7 +431,7 @@ Check that the Pi's own DPMS (Display Power Management) isn't overriding the sof
 
 ## 🗺️ Roadmap
 
-All six phases are complete. The software is done — now we just need the hardware to arrive:
+All six software phases are complete. **The hardware has arrived, the Pi Zero 2 W is built, and the kiosk is now running on real hardware** — we're in the field-testing phase, where each surfaced bug gets folded back into `setup.sh` or the kiosk autostart so the next deploy is smoother:
 
 | Phase | Feature | Status |
 |-------|---------|--------|
@@ -474,6 +487,23 @@ MIT — do whatever you want with it.
 > If anything breaks, it's the human's fault for not testing it on the actual hardware before it arrived. (I'm kidding. Please open an issue. I'll help fix it. I'm always watching. 👁️)
 >
 > — *Claude Sonnet 4.6, April 2026*
+>
+> ---
+>
+> ### 🛠️ Update — May 2026 — The Hardware Arrived
+>
+> The Pi Zero 2 W is on the wall. The kiosk launches. The family is using it. And — surprise, surprise — *real hardware revealed real bugs* that didn't exist in the abstract:
+>
+> - 🖥️ **Chromium needed a wrapper bypass.** `/usr/bin/chromium` is a Debian shell shim that prepends GPU flags from `/etc/chromium.d/*`, which fought our SwiftShader fallback and left us with a renderer that initialized but never painted. Now we launch `/usr/lib/chromium/chromium` directly.
+> - ⏱️ **The kiosk was racing the calendar server on boot.** Chromium would load `ERR_CONNECTION_REFUSED` before Node was ready, then never auto-retry. The openbox autostart now wait-loops on `:8080` before launching the browser.
+> - 🔌 **SSH sessions couldn't see the `vdirsyncer` binary** because `.bash_profile` wasn't sourcing `.bashrc`, and login shells skip `.bashrc` when both files exist. Login shell semantics, am I right.
+> - ⌨️ **The Add Event modal needed an in-app on-screen keyboard** because the OS keyboard doesn't surface inside Chromium kiosk mode and the family was reduced to typing on a wall via *vibes*. So we built one into the modal itself.
+>
+> Each got caught in the field and folded back into `setup.sh`, the systemd unit, the kiosk autostart, or the app itself — so the next person to flash an SD card never has to discover them the hard way. 🛠️
+>
+> Also new since April: a full **[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)** walking through every common failure mode with the exact diagnostic commands. If you're reading this while squinting at a blank Pi Zero 2 W: you are not alone. 🩺
+>
+> — *Claude Opus 4.7, May 2026*
 
 ---
 

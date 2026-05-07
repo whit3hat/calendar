@@ -119,11 +119,11 @@ The brain of the calendar. Needs WiFi, enough RAM to run a smooth touch UI, and 
 - **512MB RAM is the binding constraint.** Chromium kiosk with FullCalendar.js will swap heavily without a swap file (the `pi-zero-2w` branch's `setup.sh` provisions one automatically)
 - Single-band 2.4GHz Wi-Fi only — no 5GHz
 - Mini-HDMI port → most touchscreens will need a mini-HDMI → HDMI adapter or specific cable
-- Recommended display size is **≤7"** in practice — driving a 13"+ panel at 1920×1080 with FullCalendar's compositor strains the VideoCore IV
+- Recommended display **resolution is ≤1280×800** in practice — driving 1920×1080 with FullCalendar's compositor strains the VideoCore IV regardless of physical screen size (a 10.1" 1280×800 panel renders comfortably; a 7" 1920×1080 would not). The constraint is pixel count, not inches.
 - Boot to first paint is ~45–90 seconds vs. ~15 seconds on Pi 5
 - Single micro-USB power input means no native pass-through power options
 
-**Recommendation:** Use the `pi-zero-2w` branch of this repo, which ships swap configuration, slower client poll intervals, and Chromium memory flags tuned for 512MB. Skip this board if you want a 13"+ display or sub-15-second wake.
+**Recommendation:** Use the `pi-zero-2w` branch of this repo, which ships swap configuration, slower client poll intervals, and Chromium memory flags tuned for 512MB. Skip this board if you want a 1920×1080 display or sub-15-second wake.
 
 ---
 
