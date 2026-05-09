@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!--
+  Minimal labwc config for the Pi Zero 2 W kiosk.
+  labwc operates with built-in defaults if this file is empty;
+  this stub exists so the per-user config dir has a discoverable
+  rc.xml and so future tweaks have a clear home.
+-->
+<labwc_config>
+</labwc_config>

@@ -7,10 +7,12 @@ Wants=network-online.target
 Type=simple
 User=__USER__
 WorkingDirectory=__APP_DIR__/app
+EnvironmentFile=-/boot/firmware/calendar.env
+Environment=NODE_ENV=production
+Environment=CALENDAR_DIR=/home/__USER__/.local/share/calendar
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5
-Environment=NODE_ENV=production
 
 [Install]
 WantedBy=multi-user.target

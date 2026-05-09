@@ -1,0 +1,7 @@
+[Unit]
+Description=Kiosk heartbeat watchdog — restart Chromium if heartbeat stale
+After=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kiosk-watchdog.sh check-and-restart

@@ -1,295 +1,349 @@
-#!/bin/bash
-# ================================================================
-# Pi Family Calendar — Phase 1 Setup
-# ================================================================
-# Tested on: Raspberry Pi OS Lite (64-bit), Pi 4 and Pi 5
+#!/usr/bin/env bash
+# Pi Zero 2 W v2 setup — Wayland + labwc + greetd kiosk
+# No swap. Hardware GL via VC4 KMS. Heartbeat watchdog.
+# Runs on Raspberry Pi OS Lite Bookworm/Trixie 64-bit.
 #
-# Prerequisites (do these before running this script):
-#   - Pi is connected to WiFi or Ethernet
-#   - SSH is enabled OR keyboard/monitor is attached
-#   - Running as the default user (not root)
-#   - An app-specific password ready from appleid.apple.com
-#     → Sign-In and Security → App-Specific Passwords → +
-#
-# Usage:
-#   bash setup.sh
-#
-# What this script does:
-#   1. Updates the system and installs dependencies
-#   2. Installs Node.js 22.x LTS
-#   3. Installs vdirsyncer (iCloud CalDAV sync tool)
-#   4. Configures vdirsyncer with your iCloud credentials
-#   5. Discovers your iCloud calendars and runs initial sync
-#   6. Sets up Chromium kiosk (auto-launches on every boot)
-#   7. Adds a cron job to sync calendars every 5 minutes
-# ================================================================
+# Idempotent: safe to re-run. Cleans up v1 artifacts (swap file, openbox
+# autostart, .bash_profile startx, Firefox profile) on the way through.
+set -euo pipefail
 
-set -e  # Exit immediately on any error
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# ── Colours ──────────────────────────────────────────────────
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-BOLD='\033[1m'
-NC='\033[0m'
+USER_NAME="${SUDO_USER:-${USER}}"
+USER_HOME="$(getent passwd "${USER_NAME}" | cut -d: -f6)"
+APP_DIR="${USER_HOME}/calendar-app"
 
-step()  { echo -e "\n${GREEN}${BOLD}==> $1${NC}"; }
-ok()    { echo -e "${GREEN}  ✓  $1${NC}"; }
-info()  { echo -e "     $1"; }
-warn()  { echo -e "${YELLOW}  ⚠  $1${NC}"; }
-abort() { echo -e "${RED}  ✗  $1${NC}"; exit 1; }
+BOOT_FW="/boot/firmware"
+[[ -d "${BOOT_FW}" ]] || BOOT_FW="/boot"
+BOOT_CONFIG="${BOOT_FW}/config.txt"
+BOOT_CMDLINE="${BOOT_FW}/cmdline.txt"
 
-# ── Paths ─────────────────────────────────────────────────────
-CALENDAR_DIR="$HOME/.local/share/calendar"
-STATUS_DIR="$HOME/.local/share/vdirsyncer/status"
-LOG_DIR="$HOME/.local/share/vdirsyncer"
-VDIR_CONFIG="$HOME/.config/vdirsyncer/config"
-APP_DIR="$HOME/calendar-app"
-OPENBOX_CONFIG="$HOME/.config/openbox"
-KIOSK_URL="http://localhost:8080"
-NODE_MAJOR="22"
+log()  { echo -e "\n\033[1;34m==>\033[0m $*"; }
+warn() { echo -e "\033[1;33m!!\033[0m $*" >&2; }
+die()  { echo -e "\033[1;31mXX\033[0m $*" >&2; exit 1; }
 
-# ── Sanity checks ─────────────────────────────────────────────
-if [ "$EUID" -eq 0 ]; then
-  abort "Do not run this script as root. Run as your normal Pi user."
+[[ "${EUID}" -eq 0 ]] && die "Don't run with sudo. Re-run as the regular user; sudo is invoked when needed."
+
+log "Pi Zero 2 W v2 setup"
+echo "  User:    ${USER_NAME}"
+echo "  Home:    ${USER_HOME}"
+echo "  App dir: ${APP_DIR}"
+echo "  Repo:    ${REPO_ROOT}"
+echo "  Boot fw: ${BOOT_FW}"
+echo
+read -r -p "Continue? [y/N] " confirm
+[[ "${confirm}" =~ ^[Yy]$ ]] || die "Aborted by user"
+
+# -----------------------------------------------------------------------------
+# Step 1 — Clean up v1 artifacts, then update + remove unwanted packages
+# -----------------------------------------------------------------------------
+log "Step 1/11: Cleanup v1 artifacts and remove unwanted packages"
+
+# v1 swap file
+if [[ -f /swapfile-calendar ]]; then
+  warn "Removing v1 swap file /swapfile-calendar"
+  sudo swapoff /swapfile-calendar 2>/dev/null || true
+  sudo rm -f /swapfile-calendar
+  sudo sed -i '\|/swapfile-calendar|d' /etc/fstab
+fi
+sudo sed -i '/^vm\.swappiness/d' /etc/sysctl.conf 2>/dev/null || true
+
+# v1 .bash_profile startx auto-launch
+if [[ -f "${USER_HOME}/.bash_profile" ]] && grep -qE 'startx|openbox' "${USER_HOME}/.bash_profile"; then
+  warn "Stripping startx/openbox from ~/.bash_profile (backed up to .bash_profile.v1bak)"
+  cp "${USER_HOME}/.bash_profile" "${USER_HOME}/.bash_profile.v1bak"
+  sed -i '/startx/d;/openbox/d' "${USER_HOME}/.bash_profile"
 fi
 
-if ! ping -c 1 8.8.8.8 &>/dev/null; then
-  abort "No internet connection detected. Connect to WiFi or Ethernet first."
+# v1 openbox config + Firefox profile from the failed pivot
+rm -rf "${USER_HOME}/.config/openbox" "${USER_HOME}/.firefox-kiosk"
+
+# v1 cgroup_disable=memory if we added it during debug
+if grep -q 'cgroup_disable=memory' "${BOOT_CMDLINE}" 2>/dev/null; then
+  warn "Removing cgroup_disable=memory from cmdline.txt"
+  sudo sed -i 's/ *cgroup_disable=memory//g' "${BOOT_CMDLINE}"
 fi
 
-# ── Banner ────────────────────────────────────────────────────
-echo ""
-echo -e "${BOLD}Pi Family Calendar — Phase 1 Setup${NC}"
-echo "────────────────────────────────────────────────────"
-echo "This will configure your Pi as a family wall calendar."
-echo "Total estimated time: 10–20 minutes."
-echo ""
-echo "You will be prompted for your iCloud credentials."
-echo "These are stored only on this Pi, never sent anywhere else."
-echo ""
-read -rp "Press Enter to begin, or Ctrl+C to cancel..."
+# System update
+sudo apt update
+sudo apt full-upgrade -y
 
-# ─────────────────────────────────────────────────────────────
-# 1. SYSTEM UPDATE
-# ─────────────────────────────────────────────────────────────
-step "1/7  Updating system packages"
-sudo apt-get update -qq
-sudo apt-get upgrade -y -qq
-ok "System is up to date"
+# Strip unwanted packages — saves ~80MB resident at runtime
+sudo apt remove -y --purge \
+  network-manager \
+  bluetooth bluez bluez-firmware \
+  avahi-daemon \
+  modemmanager \
+  dphys-swapfile \
+  triggerhappy \
+  plymouth plymouth-themes 2>/dev/null || true
+sudo apt autoremove -y --purge
 
-# ─────────────────────────────────────────────────────────────
-# 2. DEPENDENCIES
-# ─────────────────────────────────────────────────────────────
-step "2/7  Installing dependencies"
-sudo apt-get install -y -qq \
-  curl \
-  git \
-  gnupg \
-  python3 \
-  python3-venv \
-  pipx \
-  xserver-xorg \
-  x11-xserver-utils \
-  xinit \
-  openbox \
+# -----------------------------------------------------------------------------
+# Step 2 — Install required packages
+# -----------------------------------------------------------------------------
+log "Step 2/11: Install required packages"
+
+# Node.js 22 LTS via NodeSource if not already current
+if ! command -v node >/dev/null || [[ "$(node --version | sed 's/v\([0-9]*\).*/\1/')" -lt 22 ]]; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+fi
+
+sudo apt install -y --no-install-recommends \
+  greetd labwc seatd wlr-randr \
   chromium \
-  unclutter \
-  xdotool
-ok "Dependencies installed"
+  nodejs \
+  pipx \
+  curl ca-certificates rsync \
+  wpasupplicant ifupdown isc-dhcp-client iw \
+  cron
 
-# Node.js
-if command -v node &>/dev/null && [[ "$(node -v)" == v${NODE_MAJOR}* ]]; then
-  ok "Node.js $(node -v) already installed — skipping"
-else
-  info "Installing Node.js ${NODE_MAJOR}.x LTS..."
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
-    | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
-  sudo apt-get update -qq
-  sudo apt-get install -y nodejs
-  ok "Node.js $(node -v) installed"
+# vdirsyncer via pipx (avoids system Python conflicts)
+pipx install vdirsyncer 2>/dev/null || pipx upgrade vdirsyncer
+pipx ensurepath
+# Make sure the pipx bin dir applies in this script
+export PATH="${USER_HOME}/.local/bin:${PATH}"
+
+# Make sure ~/.bashrc is sourced from .bash_profile so SSH sessions inherit
+# the pipx PATH (which ensurepath wrote into .bashrc)
+if [[ -f "${USER_HOME}/.bash_profile" ]] && ! grep -q '\.bashrc' "${USER_HOME}/.bash_profile"; then
+  echo '[ -f ~/.bashrc ] && . ~/.bashrc' >> "${USER_HOME}/.bash_profile"
 fi
 
-# ─────────────────────────────────────────────────────────────
-# 3. VDIRSYNCER
-# ─────────────────────────────────────────────────────────────
-step "3/7  Installing vdirsyncer"
-pipx install vdirsyncer
+# -----------------------------------------------------------------------------
+# Step 3 — Configure networking (interactive Wi-Fi setup if not already up)
+# -----------------------------------------------------------------------------
+log "Step 3/11: Configure Wi-Fi (ifupdown + wpa_supplicant)"
 
-# Ensure ~/.local/bin is in PATH
-if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-  export PATH="$HOME/.local/bin:$PATH"
-fi
-ok "vdirsyncer installed"
-
-# ─────────────────────────────────────────────────────────────
-# 4. CREATE DIRECTORIES
-# ─────────────────────────────────────────────────────────────
-step "4/7  Creating data directories"
-mkdir -p \
-  "$CALENDAR_DIR" \
-  "$STATUS_DIR" \
-  "$LOG_DIR" \
-  "$APP_DIR" \
-  "$OPENBOX_CONFIG" \
-  "$(dirname "$VDIR_CONFIG")"
-ok "Directories created"
-
-# ─────────────────────────────────────────────────────────────
-# 5. ICLOUD CONFIG + SYNC
-# ─────────────────────────────────────────────────────────────
-step "5/7  Configuring iCloud CalDAV"
-
-if [ -f "$VDIR_CONFIG" ]; then
-  warn "vdirsyncer config already exists — skipping credential setup."
-  info "To update credentials:  nano $VDIR_CONFIG"
+if ip route get 1.1.1.1 &>/dev/null; then
+  echo "Network already up — skipping Wi-Fi prompt"
 else
-  echo ""
-  echo "  ┌─────────────────────────────────────────────────────┐"
-  echo "  │  iCloud App-Specific Password                       │"
-  echo "  │                                                     │"
-  echo "  │  1. Open https://appleid.apple.com on your phone    │"
-  echo "  │  2. Sign-In and Security → App-Specific Passwords   │"
-  echo "  │  3. Tap + and label it  vdirsyncer                  │"
-  echo "  │  4. Copy the password shown (xxxx-xxxx-xxxx-xxxx)   │"
-  echo "  └─────────────────────────────────────────────────────┘"
-  echo ""
-  read -rp "  iCloud email address: " ICLOUD_EMAIL
-  read -rsp "  App-specific password: " ICLOUD_PASS
-  echo ""
+  read -r -p "Wi-Fi SSID: " WIFI_SSID
+  read -r -s -p "Wi-Fi password: " WIFI_PASS
+  echo
 
-  # Write config (no variable expansion inside heredoc for password safety)
-  cat > "$VDIR_CONFIG" <<EOF
+  sudo tee /etc/wpa_supplicant/wpa_supplicant-wlan0.conf >/dev/null <<EOF
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+country=US
+
+network={
+    ssid="${WIFI_SSID}"
+    psk="${WIFI_PASS}"
+    key_mgmt=WPA-PSK
+}
+EOF
+  sudo chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+
+  sudo mkdir -p /etc/network/interfaces.d
+  sudo tee /etc/network/interfaces.d/wlan0 >/dev/null <<EOF
+auto wlan0
+iface wlan0 inet dhcp
+EOF
+
+  sudo systemctl enable --now wpa_supplicant@wlan0 || true
+  sudo ifup wlan0 || true
+
+  warn "Waiting up to 30s for network..."
+  for _ in {1..30}; do
+    ip route get 1.1.1.1 &>/dev/null && break
+    sleep 1
+  done
+fi
+ip route get 1.1.1.1 &>/dev/null || die "No network — cannot continue"
+
+# -----------------------------------------------------------------------------
+# Step 4 — Boot params: VC4 KMS GL + hardware watchdog
+# -----------------------------------------------------------------------------
+log "Step 4/11: Configure boot params (VC4 KMS + watchdog)"
+
+ensure_config_line() {
+  local file="$1" line="$2"
+  if ! sudo grep -qF "${line}" "${file}"; then
+    echo "${line}" | sudo tee -a "${file}" >/dev/null
+  fi
+}
+
+ensure_config_line "${BOOT_CONFIG}" "dtoverlay=vc4-kms-v3d"
+ensure_config_line "${BOOT_CONFIG}" "gpu_mem=64"
+ensure_config_line "${BOOT_CONFIG}" "dtparam=watchdog=on"
+
+# -----------------------------------------------------------------------------
+# Step 5 — vdirsyncer + iCloud
+# -----------------------------------------------------------------------------
+log "Step 5/11: Configure iCloud sync via vdirsyncer"
+
+VDIR_CONFIG_DIR="${USER_HOME}/.config/vdirsyncer"
+VDIR_DATA_DIR="${USER_HOME}/.local/share/calendar"
+VDIR_LOG_DIR="${USER_HOME}/.local/share/vdirsyncer"
+mkdir -p "${VDIR_CONFIG_DIR}" "${VDIR_DATA_DIR}" "${VDIR_LOG_DIR}"
+
+if [[ ! -f "${VDIR_CONFIG_DIR}/config" ]]; then
+  read -r -p "Apple ID (iCloud email): " APPLE_ID
+  read -r -s -p "App-specific password (https://account.apple.com → Sign-In and Security → App-Specific Passwords): " APP_PASS
+  echo
+
+  cat > "${VDIR_CONFIG_DIR}/config" <<EOF
 [general]
-status_path = "$STATUS_DIR"
+status_path = "${USER_HOME}/.vdirsyncer/status/"
 
 [pair family_calendar]
-a = "family_local"
-b = "family_icloud"
-collections = ["from a", "from b"]
+a = "icloud_local"
+b = "icloud_remote"
+collections = ["from b"]
+metadata = ["color", "displayname"]
 conflict_resolution = "b wins"
 
-[storage family_local]
+[storage icloud_local]
 type = "filesystem"
-path = "$CALENDAR_DIR"
+path = "${VDIR_DATA_DIR}"
 fileext = ".ics"
 
-[storage family_icloud]
+[storage icloud_remote]
 type = "caldav"
 url = "https://caldav.icloud.com/"
-username = "$ICLOUD_EMAIL"
-password = "$ICLOUD_PASS"
+username = "${APPLE_ID}"
+password = "${APP_PASS}"
+EOF
+  chmod 600 "${VDIR_CONFIG_DIR}/config"
+else
+  echo "Existing vdirsyncer config preserved at ${VDIR_CONFIG_DIR}/config"
+fi
+
+vdirsyncer discover family_calendar
+vdirsyncer sync
+
+# Cron job for sync every 5 min (only add if not already present)
+if ! crontab -l 2>/dev/null | grep -q "vdirsyncer sync"; then
+  ( crontab -l 2>/dev/null; echo "*/5 * * * * ${USER_HOME}/.local/bin/vdirsyncer sync >> ${VDIR_LOG_DIR}/sync.log 2>&1" ) | crontab -
+fi
+
+# -----------------------------------------------------------------------------
+# Step 6 — Install calendar app
+# -----------------------------------------------------------------------------
+log "Step 6/11: Install calendar app to ${APP_DIR}"
+
+if [[ "${REPO_ROOT}" != "${APP_DIR}" ]]; then
+  mkdir -p "${APP_DIR}"
+  rsync -a --delete \
+    --exclude='.git' --exclude='node_modules' --exclude='.DS_Store' \
+    --exclude='*.bak.*' --exclude='*.v1bak' \
+    "${REPO_ROOT}/" "${APP_DIR}/"
+fi
+
+cd "${APP_DIR}/app"
+npm install --omit=dev
+
+# Install calendar.service from the template
+sudo sed \
+  -e "s|__USER__|${USER_NAME}|g" \
+  -e "s|__APP_DIR__|${APP_DIR}|g" \
+  "${APP_DIR}/systemd/calendar.service" \
+  | sudo tee /etc/systemd/system/calendar.service >/dev/null
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now calendar.service
+
+# -----------------------------------------------------------------------------
+# Step 7 — Kiosk display stack: greetd + labwc + Chromium
+# -----------------------------------------------------------------------------
+log "Step 7/11: Install kiosk display stack (greetd + labwc + Chromium)"
+
+# greetd config — autologin into labwc on vt7
+sudo mkdir -p /etc/greetd
+sudo tee /etc/greetd/config.toml >/dev/null <<EOF
+[terminal]
+vt = 7
+
+[default_session]
+command = "/usr/bin/labwc"
+user = "${USER_NAME}"
 EOF
 
-  # Restrict permissions so only this user can read the credentials
-  chmod 600 "$VDIR_CONFIG"
-  ok "Config written (permissions: 600 — owner read/write only)"
-fi
+# labwc per-user config
+mkdir -p "${USER_HOME}/.config/labwc"
+install -m 755 "${APP_DIR}/config/labwc/autostart" "${USER_HOME}/.config/labwc/autostart"
+install -m 644 "${APP_DIR}/config/labwc/rc.xml"   "${USER_HOME}/.config/labwc/rc.xml"
 
-echo ""
-info "Discovering iCloud calendars..."
-info "If asked to create collections, type 'yes' and press Enter."
-echo ""
-vdirsyncer discover family_calendar || abort "Discovery failed. Check credentials in $VDIR_CONFIG and re-run this script."
+# User must be in the seat group for seatd
+sudo usermod -aG seat "${USER_NAME}"
 
-info "Running initial sync..."
-vdirsyncer sync || abort "Sync failed. Run 'vdirsyncer sync' manually to see the error."
+# Boot to graphical target (greetd will spawn labwc on vt7)
+sudo systemctl enable greetd
+sudo systemctl set-default graphical.target
 
-ICS_COUNT=$(find "$CALENDAR_DIR" -name "*.ics" 2>/dev/null | wc -l)
-ok "Initial sync complete — $ICS_COUNT .ics file(s) in $CALENDAR_DIR"
+# -----------------------------------------------------------------------------
+# Step 8 — Heartbeat watchdog
+# -----------------------------------------------------------------------------
+log "Step 8/11: Install heartbeat watchdog"
 
-if [ "$ICS_COUNT" -eq 0 ]; then
-  warn "No .ics files found. Make sure your iCloud account has at least one calendar with events."
-  info "You can re-run the sync manually: vdirsyncer sync"
-fi
+sudo install -m 755 "${APP_DIR}/scripts/kiosk-watchdog.sh" /usr/local/bin/kiosk-watchdog.sh
 
-# ─────────────────────────────────────────────────────────────
-# 6. CRON JOB
-# ─────────────────────────────────────────────────────────────
-step "6/7  Setting up 5-minute sync cron job"
-CRON_LINE="*/5 * * * * $HOME/.local/bin/vdirsyncer sync >> $LOG_DIR/sync.log 2>&1"
+for unit in kiosk-watchdog.service kiosk-watchdog.timer kiosk-reboot.service kiosk-reboot.timer; do
+  sudo install -m 644 "${APP_DIR}/systemd/${unit}" "/etc/systemd/system/${unit}"
+done
 
-if crontab -l 2>/dev/null | grep -q "vdirsyncer sync"; then
-  ok "Cron job already exists — skipping"
+sudo systemctl daemon-reload
+sudo systemctl enable --now kiosk-watchdog.timer
+sudo systemctl enable --now kiosk-reboot.timer
+
+# -----------------------------------------------------------------------------
+# Step 9 — Runtime config on /boot/firmware (editable from any computer)
+# -----------------------------------------------------------------------------
+log "Step 9/11: Install runtime config to ${BOOT_FW}/calendar.env"
+
+if [[ ! -f "${BOOT_FW}/calendar.env" ]]; then
+  sudo cp "${APP_DIR}/config/calendar.env.template" "${BOOT_FW}/calendar.env"
+  echo "Default calendar.env installed at ${BOOT_FW}/calendar.env"
+  echo "Edit it on the SD card to customize weather location and sleep schedule."
 else
-  (crontab -l 2>/dev/null || true; echo "$CRON_LINE") | crontab -
-  ok "Cron job added (runs every 5 minutes)"
+  echo "Existing ${BOOT_FW}/calendar.env preserved"
 fi
 
-# ─────────────────────────────────────────────────────────────
-# 7. CHROMIUM KIOSK
-# ─────────────────────────────────────────────────────────────
-step "7/7  Configuring Chromium kiosk"
+# -----------------------------------------------------------------------------
+# Step 10 — systemd hardware watchdog (BCM2835)
+# -----------------------------------------------------------------------------
+log "Step 10/11: Enable systemd hardware watchdog"
 
-# Openbox autostart: disable screensaver, hide cursor, launch Chromium
-cat > "$OPENBOX_CONFIG/autostart" <<EOF
-# Disable screen blanking and power management
-xset s off
-xset s noblank
-xset -dpms
+sudo sed -i \
+  -e 's|^#*RuntimeWatchdogSec=.*|RuntimeWatchdogSec=30s|' \
+  -e 's|^#*ShutdownWatchdogSec=.*|ShutdownWatchdogSec=10min|' \
+  /etc/systemd/system.conf
 
-# Hide mouse cursor after 0.5 seconds of inactivity
-unclutter -idle 0.5 -root &
+# Force append if patterns weren't present (fresh systemd.conf)
+sudo grep -q '^RuntimeWatchdogSec' /etc/systemd/system.conf || \
+  echo 'RuntimeWatchdogSec=30s' | sudo tee -a /etc/systemd/system.conf >/dev/null
+sudo grep -q '^ShutdownWatchdogSec' /etc/systemd/system.conf || \
+  echo 'ShutdownWatchdogSec=10min' | sudo tee -a /etc/systemd/system.conf >/dev/null
 
-# Launch Chromium in kiosk mode
-chromium \\
-  --kiosk \\
-  --noerrdialogs \\
-  --disable-infobars \\
-  --disable-session-crashed-bubble \\
-  --disable-restore-session-state \\
-  --touch-events=enabled \\
-  --check-for-update-interval=31536000 \\
-  $KIOSK_URL &
+# -----------------------------------------------------------------------------
+# Step 11 — Done
+# -----------------------------------------------------------------------------
+log "Step 11/11: Setup complete"
+
+cat <<EOF
+
+=== Pi Zero 2 W v2 setup complete ===
+
+Stack installed:
+  - Wayland + labwc + greetd  (boots straight to graphical.target on vt7)
+  - Vanilla Chromium with native VC4 GL  (no SwiftShader, no wrapper bypass)
+  - Node.js calendar app at ${APP_DIR}, served via calendar.service on :8080
+  - vdirsyncer cron job syncing iCloud every 5 min
+  - kiosk-watchdog.timer (60s)  -> restart kiosk if heartbeat > 5 min stale
+  - kiosk-reboot.timer (5 min)  -> reboot if heartbeat > 15 min stale
+  - BCM2835 hardware watchdog via systemd
+  - NO swap file (intentional - see docs/V2-ARCHITECTURE.md)
+
+Per-deployment config: ${BOOT_FW}/calendar.env
+  Editable from any computer by popping the SD card.
+
+Reboot to start the kiosk:
+  sudo reboot
+
+Expected first-paint: 60-90s after boot.
+
+Logs:
+  sudo journalctl -u calendar.service -u greetd -u kiosk-watchdog.service -f
 EOF
-ok "Openbox autostart written"
-
-# Auto-start X on TTY1 login (only if not already in a graphical session)
-BASH_PROFILE="$HOME/.bash_profile"
-if ! grep -q "startx" "$BASH_PROFILE" 2>/dev/null; then
-  cat >> "$BASH_PROFILE" <<'PROFILE'
-
-# Auto-start Chromium kiosk on TTY1
-if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
-  exec startx /usr/bin/openbox-session -- -nocursor 2>/tmp/kiosk.log
-fi
-PROFILE
-  ok ".bash_profile updated — X starts automatically on TTY1"
-fi
-
-# Enable CLI auto-login (so TTY1 logs in without a password prompt on boot)
-if command -v raspi-config &>/dev/null; then
-  sudo raspi-config nonint do_boot_behaviour B2 2>/dev/null
-  ok "Auto-login to CLI enabled via raspi-config"
-else
-  warn "raspi-config not found."
-  info "Enable auto-login manually: sudo systemctl edit getty@tty1"
-  info "Add:  [Service]"
-  info "      ExecStart="
-  info "      ExecStart=-/sbin/agetty --autologin $USER --noclear %I \$TERM"
-fi
-
-# ── Summary ───────────────────────────────────────────────────
-echo ""
-echo -e "${GREEN}${BOLD}════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}  Phase 1 Complete ✓${NC}"
-echo -e "${GREEN}${BOLD}════════════════════════════════════════${NC}"
-echo ""
-echo -e "  Calendars   →  $CALENDAR_DIR"
-echo -e "  Sync log    →  $LOG_DIR/sync.log"
-echo -e "  Kiosk URL   →  $KIOSK_URL"
-echo ""
-echo -e "${BOLD}Next steps:${NC}"
-echo ""
-echo "  Phase 2 — Build the calendar app:"
-echo "    cd $APP_DIR && git clone https://github.com/whit3hat/calendar ."
-echo ""
-echo "  Once the app is running on :8080, test the kiosk:"
-echo "    sudo reboot"
-echo ""
-echo "  Monitor sync activity:"
-echo "    tail -f $LOG_DIR/sync.log"
-echo ""

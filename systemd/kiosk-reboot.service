@@ -1,0 +1,7 @@
+[Unit]
+Description=Kiosk reboot escalation — reboot if heartbeat stale > 15 min
+After=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kiosk-watchdog.sh check-and-reboot

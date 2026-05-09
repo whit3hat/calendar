@@ -1,0 +1,11 @@
+[Unit]
+Description=Run kiosk reboot escalation every 5 minutes
+After=graphical.target
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=5min
+Unit=kiosk-reboot.service
+
+[Install]
+WantedBy=timers.target

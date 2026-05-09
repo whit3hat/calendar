@@ -1,0 +1,11 @@
+[Unit]
+Description=Run kiosk heartbeat watchdog every 60 seconds
+After=graphical.target
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+Unit=kiosk-watchdog.service
+
+[Install]
+WantedBy=timers.target

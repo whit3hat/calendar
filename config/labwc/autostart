@@ -1,0 +1,29 @@
+#!/bin/sh
+# labwc autostart — Pi Zero 2 W kiosk
+#
+# Runs once per labwc session (at login or session restart).
+# Waits for the calendar HTTP server, then launches Chromium fullscreen.
+
+# Wait for the calendar server to respond before launching the browser
+echo "Waiting for calendar server on http://localhost:8080..." | systemd-cat -t kiosk-autostart
+until curl -sf http://localhost:8080/ -o /dev/null; do
+  sleep 1
+done
+echo "Server is up — launching Chromium" | systemd-cat -t kiosk-autostart
+
+# Launch Chromium with low-end-device tuning + native Wayland/Ozone GL.
+# Notably absent (and intentional): --use-gl=*, --disable-gpu,
+# --memory-pressure-off, --disable-dev-shm-usage. Wayland/Ozone uses
+# the VC4 KMS driver natively for hardware acceleration.
+exec chromium \
+  --kiosk \
+  --no-memcheck \
+  --process-per-site \
+  --enable-low-end-device-mode \
+  --autoplay-policy=no-user-gesture-required \
+  --noerrdialogs \
+  --disable-session-crashed-bubble \
+  --disable-features=Translate \
+  --ozone-platform=wayland \
+  --start-fullscreen \
+  http://localhost:8080
