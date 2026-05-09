@@ -1887,6 +1887,14 @@
       // Sleep schedule — check now and then every minute
       checkSleepSchedule();
       setInterval(checkSleepSchedule, 60000);
+
+      // Heartbeat — ping watchdog endpoint every 30s so kiosk-watchdog.timer
+      // can detect a hung browser via /dev/shm/kiosk-heartbeat mtime.
+      function pingHeartbeat() {
+        fetch('/api/heartbeat').catch(() => {/* offline — watchdog will handle */});
+      }
+      pingHeartbeat();
+      setInterval(pingHeartbeat, 30 * 1000);
     });
   </script>
 </body>

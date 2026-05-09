@@ -631,6 +631,18 @@ app.delete('/api/events/:uid', (req, res) => {
   res.status(204).send();
 });
 
+// Watchdog heartbeat — frontend pings every 30s; the kiosk-watchdog
+// timer reads this file's mtime to detect a hung browser. Best-effort:
+// silently degrades on systems without /dev/shm (e.g. Mac dev).
+app.get('/api/heartbeat', (req, res) => {
+  try {
+    fs.writeFileSync('/dev/shm/kiosk-heartbeat', '');
+  } catch (_) {
+    // /dev/shm not writable — fine, just respond OK
+  }
+  res.send('ok');
+});
+
 app.listen(PORT, () => {
   console.log(`Calendar server running at http://localhost:${PORT}`);
   console.log(`Reading calendars from: ${CALENDAR_DIR}`);
