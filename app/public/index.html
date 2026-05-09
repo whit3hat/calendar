@@ -1018,7 +1018,7 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="/vendor/fullcalendar/index.global.min.js"></script>
   <script src="/vendor/simple-keyboard/index.js"></script>
   <script>
     // ── State ─────────────────────────────────────────────────────
@@ -1094,38 +1094,9 @@
     }
 
     // ── Weather ───────────────────────────────────────────────────
-    // WMO weather interpretation codes → emoji + label
-    const WMO_CODES = {
-       0: { icon: '☀️',  label: 'Clear' },
-       1: { icon: '🌤️', label: 'Mainly Clear' },
-       2: { icon: '⛅',  label: 'Partly Cloudy' },
-       3: { icon: '☁️',  label: 'Overcast' },
-      45: { icon: '🌫️', label: 'Foggy' },
-      48: { icon: '🌫️', label: 'Foggy' },
-      51: { icon: '🌦️', label: 'Light Drizzle' },
-      53: { icon: '🌦️', label: 'Drizzle' },
-      55: { icon: '🌦️', label: 'Heavy Drizzle' },
-      61: { icon: '🌧️', label: 'Light Rain' },
-      63: { icon: '🌧️', label: 'Rain' },
-      65: { icon: '🌧️', label: 'Heavy Rain' },
-      71: { icon: '🌨️', label: 'Light Snow' },
-      73: { icon: '🌨️', label: 'Snow' },
-      75: { icon: '🌨️', label: 'Heavy Snow' },
-      77: { icon: '🌨️', label: 'Snow Grains' },
-      80: { icon: '🌧️', label: 'Rain Showers' },
-      81: { icon: '🌧️', label: 'Rain Showers' },
-      82: { icon: '🌧️', label: 'Heavy Showers' },
-      85: { icon: '🌨️', label: 'Snow Showers' },
-      86: { icon: '🌨️', label: 'Heavy Snow Showers' },
-      95: { icon: '⛈️',  label: 'Thunderstorm' },
-      96: { icon: '⛈️',  label: 'Thunderstorm' },
-      99: { icon: '⛈️',  label: 'Thunderstorm' },
-    };
-
-    function wmoInfo(code) {
-      return WMO_CODES[code] || { icon: '🌡️', label: 'Unknown' };
-    }
-
+    // The server has already resolved each weather code to an icon + label,
+    // so the client just renders the strings it was handed (Pi Zero 2 W
+    // optimization — saves ~1KB of JS and per-render lookup work).
     const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     async function loadWeather() {
@@ -1135,21 +1106,18 @@
         const w = await r.json();
         if (!w.enabled) return;
 
-        const { icon, label } = wmoInfo(w.current.code);
-
-        document.getElementById('weather-icon').textContent = icon;
+        document.getElementById('weather-icon').textContent = w.current.icon;
         document.getElementById('weather-temp').textContent = `${w.current.temp}°${w.units}`;
-        document.getElementById('weather-desc').textContent = label;
+        document.getElementById('weather-desc').textContent = w.current.label;
         document.getElementById('weather-hilo').textContent =
           `↑ ${w.today.high}°  ↓ ${w.today.low}°`;
 
         document.getElementById('weather-forecast').innerHTML = w.forecast.map(day => {
           // Parse as local noon to avoid any UTC-midnight timezone shift on the day name
           const date = new Date(day.date + 'T12:00:00');
-          const { icon: dayIcon } = wmoInfo(day.code);
           return `<div class="weather-day">` +
             `<span class="weather-day-name">${DAY_ABBR[date.getDay()]}</span>` +
-            `<span class="weather-day-icon">${dayIcon}</span>` +
+            `<span class="weather-day-icon">${esc(day.icon)}</span>` +
             `<span class="weather-day-high">${day.high}°</span>` +
             `</div>`;
         }).join('');
@@ -1891,10 +1859,12 @@
       openPanel(); // show today's panel by default
 
       // On-screen keyboard — initialized AFTER FullCalendar mounts and
-      // wrapped in try/catch so any future OSK regression cannot take
-      // the wall display down with it. The keyboard is a nice-to-have;
-      // the calendar display is the core feature, so it gets to run
-      // first and OSK failures are logged-and-ignored, not propagated.
+      // wrapped in try/catch so a future OSK regression cannot take the
+      // wall display down with it. This is the lesson from the
+      // .#osk-container SyntaxError that blanked the kiosk on first boot
+      // of this branch: the keyboard is a nice-to-have; the calendar
+      // display is the core feature, so it gets to run first and OSK
+      // failures are logged-and-ignored, not propagated.
       try {
         initOSK();
         bindOSK();
@@ -1902,12 +1872,17 @@
         console.error('OSK init failed (calendar still works):', err);
       }
 
-      setInterval(() => calendarInstance.refetchEvents(), 60000);
-      setInterval(updateStatus, 30000);
+      // Pi Zero 2 W: poll less often to avoid hammering the single-core CPU.
+      // Events refetch every 5 min (was 60s); status text every 60s (was 30s).
+      // vdirsyncer's own cron is 5 min, so we never miss a real iCloud change.
+      setInterval(() => calendarInstance.refetchEvents(), 5 * 60 * 1000);
+      setInterval(updateStatus, 60000);
 
-      // Weather — load now and refresh every 15 minutes
+      // Weather — load now and refresh every 60 minutes (was 15 min).
+      // The server cache is also 15 min, so faster client polling never
+      // produced fresher data anyway — just more browser work.
       loadWeather();
-      setInterval(loadWeather, 15 * 60 * 1000);
+      setInterval(loadWeather, 60 * 60 * 1000);
 
       // Sleep schedule — check now and then every minute
       checkSleepSchedule();

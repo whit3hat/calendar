@@ -96,6 +96,37 @@ The brain of the calendar. Needs WiFi, enough RAM to run a smooth touch UI, and 
 
 ---
 
+### Option D — Raspberry Pi Zero 2 W
+**Estimated price:** ~$15 MSRP
+**Buy:** [raspberrypi.com](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/) · [Adafruit](https://www.adafruit.com/product/5291) · [Pimoroni](https://shop.pimoroni.com/products/raspberry-pi-zero-2-w)
+
+| Spec | Value |
+|---|---|
+| CPU | Broadcom BCM2710A1 Cortex-A53, quad-core 1 GHz, 64-bit ARMv8 |
+| RAM | 512MB LPDDR2 (**not upgradeable**) |
+| GPU | VideoCore IV |
+| WiFi | 802.11n single-band 2.4GHz |
+| Ports | 1× mini-HDMI, 1× micro-USB OTG, 1× micro-USB power |
+| Power draw | ~1.5–2.5W typical |
+
+**Pros:**
+- Cheapest 64-bit Pi by a wide margin — about a quarter of the Pi 5 price
+- Lowest power draw of any option here — easy to run from a small UPS
+- Same Pi-Zero footprint, so existing Zero cases and frames fit
+- Node.js 22 ships official arm64 builds, so the standard `setup.sh` install path works
+
+**Cons:**
+- **512MB RAM is the binding constraint.** Chromium kiosk with FullCalendar.js will swap heavily without a swap file (the `pi-zero-2w` branch's `setup.sh` provisions one automatically)
+- Single-band 2.4GHz Wi-Fi only — no 5GHz
+- Mini-HDMI port → most touchscreens will need a mini-HDMI → HDMI adapter or specific cable
+- Recommended display **resolution is ≤1280×800** in practice — driving 1920×1080 with FullCalendar's compositor strains the VideoCore IV regardless of physical screen size (a 10.1" 1280×800 panel renders comfortably; a 7" 1920×1080 would not). The constraint is pixel count, not inches.
+- Boot to first paint is ~45–90 seconds vs. ~15 seconds on Pi 5
+- Single micro-USB power input means no native pass-through power options
+
+**Recommendation:** Use the `pi-zero-2w` branch of this repo, which ships swap configuration, slower client poll intervals, and Chromium memory flags tuned for 512MB. Skip this board if you want a 1920×1080 display or sub-15-second wake.
+
+---
+
 ## 2. Touchscreen Display
 
 The most important aesthetic and usability component. IPS panels are mandatory for wall mounting (wide viewing angles). Capacitive touch only — resistive panels are inferior for multi-touch and feel outdated.
@@ -647,3 +678,18 @@ An overlay is a frame or panel that sits in front of any existing LCD monitor an
 | Storage | Samsung PRO Endurance 128GB microSD |
 | UPS | PiSugar S3 |
 | Enclosure | VESA wall mount — monitor + Pi bracket |
+
+### Pi Zero 2 W Ultra-Budget Build (~$120–160 total)
+> **Use the `pi-zero-2w` branch of this repo** — it ships a 1GB swap-file step, slower client poll intervals, and Chromium memory flags tuned for the Zero's 512MB RAM. The `main` branch will OOM-kill Chromium on this board.
+
+| Component | Choice |
+|---|---|
+| SBC | Raspberry Pi Zero 2 W (~$15) |
+| Display | Waveshare 7" HDMI IPS Capacitive Touch (~$70) |
+| Adapter | Mini-HDMI → HDMI adapter or cable (~$5) |
+| Power | Official Pi Zero USB Micro-B PSU (~$8) |
+| Storage | SanDisk High Endurance 64GB microSD (~$15) |
+| UPS | None (skip — Zero 2 W's low draw makes a small UPS optional) |
+| Enclosure | 3D-printed Zero-sized frame |
+
+**Trade-offs to expect:** noticeably slower kiosk boot (~45–90 sec to first paint), occasional jank when opening the Add Event modal under memory pressure, and no support for displays larger than ~7" without UI lag. In return, the whole build comes in around **$120–160** — roughly a third of the Recommended Build.

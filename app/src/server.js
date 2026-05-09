@@ -24,6 +24,38 @@ const WEATHER_UNITS = (process.env.WEATHER_UNITS || 'fahrenheit').toLowerCase();
 const weatherCache = { data: null, fetchedAt: 0 };
 const WEATHER_CACHE_MS = 15 * 60 * 1000; // 15 minutes
 
+// WMO weather interpretation codes → emoji + label.
+// Resolved server-side on the Pi Zero 2 W variant so the browser never has
+// to ship a 30-entry lookup map or do per-render lookups.
+const WMO_CODES = {
+   0: { icon: '☀️',  label: 'Clear' },
+   1: { icon: '🌤️', label: 'Mainly Clear' },
+   2: { icon: '⛅',  label: 'Partly Cloudy' },
+   3: { icon: '☁️',  label: 'Overcast' },
+  45: { icon: '🌫️', label: 'Foggy' },
+  48: { icon: '🌫️', label: 'Foggy' },
+  51: { icon: '🌦️', label: 'Light Drizzle' },
+  53: { icon: '🌦️', label: 'Drizzle' },
+  55: { icon: '🌦️', label: 'Heavy Drizzle' },
+  61: { icon: '🌧️', label: 'Light Rain' },
+  63: { icon: '🌧️', label: 'Rain' },
+  65: { icon: '🌧️', label: 'Heavy Rain' },
+  71: { icon: '🌨️', label: 'Light Snow' },
+  73: { icon: '🌨️', label: 'Snow' },
+  75: { icon: '🌨️', label: 'Heavy Snow' },
+  77: { icon: '🌨️', label: 'Snow Grains' },
+  80: { icon: '🌧️', label: 'Rain Showers' },
+  81: { icon: '🌧️', label: 'Rain Showers' },
+  82: { icon: '🌧️', label: 'Heavy Showers' },
+  85: { icon: '🌨️', label: 'Snow Showers' },
+  86: { icon: '🌨️', label: 'Heavy Snow Showers' },
+  95: { icon: '⛈️',  label: 'Thunderstorm' },
+  96: { icon: '⛈️',  label: 'Thunderstorm' },
+  99: { icon: '⛈️',  label: 'Thunderstorm' },
+};
+const WMO_FALLBACK = { icon: '🌡️', label: 'Unknown' };
+const wmoInfo = code => WMO_CODES[code] || WMO_FALLBACK;
+
 // Colors assigned to calendars by folder name (case-insensitive).
 const CALENDAR_COLORS = {
   family:   '#3b82f6',  // blue
@@ -343,22 +375,32 @@ app.get('/api/weather', async (req, res) => {
     const json = await response.json();
 
     const daily = json.daily;
+    const currentCode = json.current.weathercode;
+    const currentInfo = wmoInfo(currentCode);
     const result = {
       enabled: true,
       current: {
-        temp: Math.round(json.current.temperature_2m),
-        code: json.current.weathercode,
+        temp:  Math.round(json.current.temperature_2m),
+        code:  currentCode,
+        icon:  currentInfo.icon,
+        label: currentInfo.label,
       },
       today: {
         high: Math.round(daily.temperature_2m_max[0]),
         low:  Math.round(daily.temperature_2m_min[0]),
       },
       // index 0 = today; slice 1–4 = next 4 days
-      forecast: daily.time.slice(1, 5).map((date, i) => ({
-        date,
-        code: daily.weathercode[i + 1],
-        high: Math.round(daily.temperature_2m_max[i + 1]),
-      })),
+      forecast: daily.time.slice(1, 5).map((date, i) => {
+        const code = daily.weathercode[i + 1];
+        const info = wmoInfo(code);
+        return {
+          date,
+          code,
+          icon:  info.icon,
+          label: info.label,
+          high:  Math.round(daily.temperature_2m_max[i + 1]),
+        };
+      }),
       units: unit === 'celsius' ? 'C' : 'F',
     };
 
