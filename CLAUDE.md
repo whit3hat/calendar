@@ -2,35 +2,69 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ Branch: `pi-zero-2w-v2` — Wayland Rebuild
+
+This branch is a **ground-up rebuild** of the Pi Zero 2 W variant. The original `pi-zero-2w` branch hit unresolvable swap-thrashing in field testing (load avg 9.34 with CPU at 6% — textbook I/O wait on SD card). After studying two production Pi-Zero-class kiosk projects (TOLDOTECHNIK and AnotterKiosk), the v2 stack replaces v1's choices on six axes:
+
+| Axis | v1 (failed) | v2 (this branch) | Why v1 was wrong |
+|---|---|---|---|
+| Swap | 1GB SD-card swap + `vm.swappiness=10` | **No swap at all** | SD-card swap on a 512MB box is a thrashing trap, not a safety net. Without it, the kernel either fits in RAM or OOM-kills (recoverable via watchdog). |
+| Display server | X11 + openbox + `.bash_profile` → `startx` | **Wayland + labwc + greetd** (real login manager) | Wayland/labwc is ~40MB lighter; greetd auto-restarts on crash; chains via systemd target instead of shell rc race. |
+| GPU | `--use-gl=swiftshader` (forced software rendering) | **Native VC4 KMS hardware GL** via Wayland/Ozone | We forced software rendering to escape the Debian Chromium wrapper's `chromium.d` flag fights. Wayland/Ozone uses VC4 natively without that fight. |
+| Browser | Firefox-ESR (after Chromium "failed") | **Vanilla Chromium** with `--no-memcheck --process-per-site --enable-low-end-device-mode` | Chromium's network-service crashes were a *symptom* of memory pressure, not a Chromium bug. Switching browsers used more memory and didn't address the root cause. |
+| OS footprint | Default install (NetworkManager, bluetooth, avahi, ModemManager) | **Aggressively stripped** — `apt remove network-manager bluetooth avahi-daemon modemmanager dphys-swapfile triggerhappy plymouth` | Saves ~80MB resident. NetworkManager replaced by ifupdown + wpa_supplicant. |
+| Recovery | None — if browser hangs, wall stays blank until manual reboot | **Heartbeat watchdog** (kiosk-watchdog.timer every 60s; reboot escalation at 15 min) | Browsers occasionally hang on a single bad render. Recovery must not require a human walking up to the wall. |
+
+**Full design rationale:** see `docs/V2-ARCHITECTURE.md`. **Reference projects studied:** TOLDOTECHNIK Raspberry-Pi-Kiosk-Display-System (Wayland/labwc primer) and Manawyrm AnotterKiosk (no-swap + watchdog patterns). **Status:** all v2 files written, awaiting fresh-SD-card flash and 24-hour soak test on real hardware. The original `pi-zero-2w` branch is deliberately not merged or deleted — it remains as a record of what was tried and why it failed. **`main` remains the canonical Pi 5 build.**
+
+---
+
 ## Project Overview
 
 A physical wall-mounted family calendar with a touchscreen display, running on a Raspberry Pi. Syncs bidirectionally with Apple Calendar (iCloud) so family members can add and view events from their iPhones or directly on the wall display.
 
-**Current status: All six phases are complete.** Hardware is on order. Next step is deploying to the Pi when it arrives.
+**Current status: All six software phases are complete. The Pi Zero 2 W hardware is deployed but the v1 stack failed in field testing. v2 is the rebuild and is ready to flash; field testing pending.** Treat new bug reports as live-deployment issues, not theoretical design questions.
 
 ## Repository Structure
 
 ```
 calendar/
-├── CLAUDE.md                  ← this file
-├── README.md                  ← public-facing project documentation
+├── CLAUDE.md                    ← this file
+├── README.md                    ← public-facing project documentation
 ├── .gitignore
 ├── hardware/
-│   └── options.md             ← hardware research (3 options per component)
+│   └── options.md               ← hardware research (Pi Zero 2 W as Option D)
 ├── software/
-│   ├── options.md             ← open-source software options (all layers)
-│   └── architecture.md       ← final decided architecture + data flow diagrams
+│   ├── options.md               ← open-source software options (all layers)
+│   └── architecture.md          ← Pi 5 architecture decisions (main branch)
+├── docs/
+│   ├── V2-ARCHITECTURE.md       ← v2 design rationale and rebuild plan
+│   └── TROUBLESHOOTING.md       ← log locations + symptom-driven fixes
 ├── config/
-│   └── vdirsyncer.conf        ← iCloud CalDAV config TEMPLATE (no real credentials)
+│   ├── vdirsyncer.conf          ← iCloud CalDAV config TEMPLATE (no real credentials)
+│   ├── calendar.env.template    ← runtime config copied to /boot/firmware/calendar.env
+│   └── labwc/
+│       ├── autostart            ← waits for :8080, launches Chromium kiosk
+│       └── rc.xml               ← labwc compositor config (minimal stub)
 ├── scripts/
-│   └── setup.sh               ← Phase 1 setup script (run on fresh Pi)
-└── app/                       ← Node.js calendar app
+│   ├── setup.sh                 ← v2 one-shot setup (11 steps, idempotent)
+│   ├── kiosk-watchdog.sh        ← restart/reboot logic for the heartbeat watchdog
+│   └── restrict-calendars.sh    ← Interactive: narrow which iCloud calendars sync
+├── systemd/
+│   ├── calendar.service         ← Node app supervision (template, __USER__/__APP_DIR__)
+│   ├── kiosk-watchdog.service   ← oneshot: pkill chromium + restart greetd if stale
+│   ├── kiosk-watchdog.timer     ← fires every 60s
+│   ├── kiosk-reboot.service     ← oneshot: systemctl reboot if stale > 15 min
+│   └── kiosk-reboot.timer       ← fires every 5 min
+└── app/                         ← Node.js calendar app
     ├── package.json
     ├── src/
-    │   └── server.js          ← Express API server
+    │   └── server.js            ← Express API server
     ├── public/
-    │   └── index.html         ← FullCalendar.js frontend (all UI logic)
-    └── data/                  ← Sample .ics files for local Mac development
+    │   ├── index.html           ← FullCalendar.js frontend (all UI logic)
+    │   └── vendor/
+    │       └── fullcalendar/    ← vendored FullCalendar v6.1.15 (no CDN at runtime)
+    └── data/                    ← Sample .ics files for local Mac development
         ├── Family/
         ├── Kids/
         └── Personal/
@@ -40,15 +74,21 @@ calendar/
 
 | Area | Decision |
 |---|---|
-| Hardware | Raspberry Pi 5 (4GB) + 10"–21.5" capacitive IPS touchscreen |
-| OS | Raspberry Pi OS Lite (64-bit) |
+| Hardware | Raspberry Pi Zero 2 W (512MB) + ≤1280×800 capacitive IPS touchscreen |
+| OS | Raspberry Pi OS Lite Bookworm/Trixie (64-bit) |
+| Display server | **Wayland** (labwc compositor, greetd login manager, vt7) |
+| GPU | **Native VC4 KMS hardware GL** via Wayland/Ozone (no SwiftShader) |
+| Kiosk browser | **Vanilla Chromium** with `--kiosk --no-memcheck --process-per-site --enable-low-end-device-mode --ozone-platform=wayland` |
+| Networking | **ifupdown + wpa_supplicant** (NetworkManager removed) |
+| Memory | **No swap** (intentional — see V2-ARCHITECTURE.md) |
+| Process supervision | systemd: `calendar.service`, `greetd.service`, `kiosk-watchdog.timer`, `kiosk-reboot.timer` + BCM2835 hardware watchdog |
 | Cloud sync | iCloud CalDAV — direct, no intermediary server |
 | Phone app | Native Apple Calendar (no new app for family members) |
-| Sync tool | vdirsyncer (polls iCloud every 5 minutes, bidirectional) |
-| Display UI | FullCalendar.js (custom web app) |
-| Backend API | Node.js + Express |
+| Sync tool | vdirsyncer (cron `*/5 * * * *`, bidirectional) |
+| Display UI | FullCalendar.js v6.1.15 (vendored, served by Express static middleware) |
+| Backend API | Node.js 22 LTS + Express |
 | ICS parsing | node-ical |
-| Kiosk layer | Chromium kiosk mode (auto-start via .bash_profile + openbox) |
+| Runtime config | `/boot/firmware/calendar.env` (KEY=value, editable from any computer by popping the SD card) |
 
 ## Key Constraints
 
@@ -58,17 +98,30 @@ calendar/
 - **iCloud quirk** — create new calendar folders from iPhone or iCloud.com only; vdirsyncer cannot create iCloud collections but reads/writes events inside existing ones freely
 - **Credential security** — real vdirsyncer config lives at `~/.config/vdirsyncer/config` on the Pi, never in this repo. `config/vdirsyncer.conf` is a template only.
 - **Single timezone** — Pi and display are in the same timezone; ICS events use floating local time (no `Z` suffix)
+- **No swap by design** — do not add a swap file or zram. SD-card swap is the disease v2 was designed to escape; zram on 512MB Pi is a CPU-load tradeoff that AnotterKiosk explicitly warns against.
 
 ## Build Phases
 
-### Phase 1 — Pi Setup & iCloud Sync ✅ Complete
-**Script:** `scripts/setup.sh`
-Run on a fresh Raspberry Pi OS Lite install. Automates:
-- System update + dependency install (Node.js 22 LTS, vdirsyncer, Chromium, openbox)
+Phases 1-6 (the application layer) carry forward unchanged from v1; their behavior is identical on v2. Only the display/supervision layer is rebuilt.
+
+### Phase 1 — Pi Setup & iCloud Sync ✅ Complete (v2 rewrite)
+**Script:** `scripts/setup.sh` (11 steps, idempotent) · **Service templates:** `systemd/*.service`
+
+Run on a fresh Raspberry Pi OS Lite install (or a Pi previously running v1 — the script cleans up v1 artifacts on the way through). Automates:
+- Cleanup of v1 leftovers (swap file, `.bash_profile` startx, openbox config, Firefox profile, `cgroup_disable=memory`)
+- System update + dependency install via `apt --no-install-recommends` (Node.js 22 LTS, vdirsyncer via pipx, Chromium, greetd, labwc, seatd, wlr-randr, wpa_supplicant)
+- Removal of NetworkManager, Bluetooth, avahi, ModemManager, dphys-swapfile, plymouth, triggerhappy (~80MB resident saved)
+- Interactive Wi-Fi setup writing `/etc/wpa_supplicant/wpa_supplicant-wlan0.conf`
+- `vc4-kms-v3d` overlay + `dtparam=watchdog=on` in `/boot/firmware/config.txt`
 - Interactive iCloud credential prompt → writes `~/.config/vdirsyncer/config`
 - `vdirsyncer discover` + initial sync → `.ics` files land in `~/.local/share/calendar/`
 - Cron job: `*/5 * * * *` keeps calendars in sync
-- Chromium kiosk: auto-launches `http://localhost:8080` on every boot
+- `calendar.service` systemd unit: substitutes `__USER__`/`__APP_DIR__` from template, installs to `/etc/systemd/system/`, `enable --now`. Survives reboots and auto-restarts on crash. Reads optional `EnvironmentFile=-/boot/firmware/calendar.env`.
+- greetd config (`/etc/greetd/config.toml`) autologs `${USER}` on vt7 → labwc compositor
+- labwc autostart: polls `until curl -sf http://localhost:8080/`, then `exec chromium --kiosk --no-memcheck --process-per-site --enable-low-end-device-mode --ozone-platform=wayland`
+- Heartbeat watchdog: `kiosk-watchdog.{service,timer}` (60s) restart greetd if `/dev/shm/kiosk-heartbeat` mtime > 5 min stale; `kiosk-reboot.{service,timer}` (5 min) reboots if > 15 min stale
+- BCM2835 hardware watchdog enabled via `RuntimeWatchdogSec=30s` in `/etc/systemd/system.conf`
+- `config/calendar.env.template` copied to `/boot/firmware/calendar.env` for SD-card-editable runtime config
 
 ### Phase 2 — Calendar Display ✅ Complete
 A Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
@@ -85,7 +138,7 @@ A Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
 - Events color-coded by calendar (Family=blue, Kids=green, Personal=amber, Work=red)
 - Left/right navigation; "+N more" overflow links
 - Right-side day panel (open by default): shows selected day broken into hour slots with a red now-line; click any day cell to switch the panel to that day; Today button resets to current day
-- Auto-polls `GET /api/events` every 60 seconds
+- Auto-polls `GET /api/events` every 5 minutes (slowed from main's 60s — single-core ARMv8 cannot afford a per-minute month-grid rerender)
 
 ### Phase 3 — Event Creation from Pi ✅ Complete
 **Backend (`POST /api/events`)**
@@ -100,60 +153,29 @@ A Node.js + FullCalendar.js web app that reads `.ics` files and renders them.
 - Form fields: title (required), calendar dropdown (from `GET /api/calendars`), date picker, all-day toggle, start/end time (shown when all-day is off), notes
 - Start time pre-filled to next full hour (capped at 22:00 to always leave room for end)
 - After save: `refetchEvents()` immediately picks up the written file
+- In-app on-screen keyboard for the modal (touchscreen-only deployment, no physical keyboard expected)
 
 ### Phase 4 — Polish ✅ Complete
-**Event detail popover**
-- Tapping any event opens a read-only popover near the tap position
-- Shows: calendar color dot, title, calendar name, formatted date/time, notes (if any)
-- Smart positioning: flips left or above if it would overflow the viewport
-- Dismissed via X, tap outside, or Escape key
-
-**Display sleep**
-- Full-screen black overlay activates at `SLEEP_HOUR` (default 0 = midnight) and lifts at `WAKE_HOUR` (default 6 = 6 AM)
-- Constants at top of script are easy to change
-- `isSleepTime()` supports wrap-around-midnight windows (e.g. SLEEP_HOUR=23, WAKE_HOUR=7)
-
-**Touch to wake**
-- Tapping the sleep overlay dismisses it for `WAKE_TIMEOUT_MS` (30 seconds) then re-sleeps
-- `goToSleep()` clears/nulls `wakeTimer` unconditionally before the guard to prevent stale timer IDs from breaking future sleep cycles
-
-**Offline graceful state**
-- On `GET /api/events` failure, `allEvents` is not cleared — the last loaded events remain visible
-- Status bar turns red: "Could not reach server — showing last loaded data"
-- On success, status bar shows "Last updated: just now" / "Last updated: N minutes ago" (refreshes every 30 seconds)
+**Event detail popover, display sleep, touch to wake, offline graceful state.** See main `CLAUDE.md` on `main` branch for full per-feature detail; v2 inherits all of this verbatim.
 
 ### Phase 5 — Weather Widget ✅ Complete
 **Backend (`GET /api/weather`)**
 - Fetches current conditions and 5-day forecast from Open-Meteo (free, no API key)
-- Location and units configurable via `WEATHER_LAT`, `WEATHER_LON`, `WEATHER_UNITS` env vars; defaults to Liberty, MO in Fahrenheit
-- 15-minute server-side in-memory cache — the Pi makes at most 4 outbound fetches per hour
-- On fetch failure, serves stale cache indefinitely; returns 503 only if cache is cold
+- Location and units configurable via `WEATHER_LAT`, `WEATHER_LON`, `WEATHER_UNITS` env vars (set in `/boot/firmware/calendar.env` on v2); defaults to Liberty, MO in Fahrenheit
+- 60-minute server-side in-memory cache on this branch (slowed from main's 15 min — single-core ARMv8)
+- WMO weather code → emoji+label lookup is server-side (removes per-render lookup work from browser)
 
-**Frontend**
-- Weather strip rendered in day panel between the date header and all-day section
-- Strip is hidden (`display: none`) until first successful fetch — graceful if no network
-- Shows: WMO emoji icon + current temp + condition label + today high/low + 4-day forecast cards (day abbr + icon + high)
-- `loadWeather()` called on DOMContentLoaded and then every 15 minutes via `setInterval`
-- WMO code → emoji/label lookup via `WMO_CODES` map (covers all 30 standard WMO interpretation codes); unmapped codes fall back to `🌡️ Unknown`
-- Forecast date strings parsed as `'T12:00:00'` (local noon) to prevent UTC-midnight timezone shifts on day-of-week label
+**Frontend** — see main branch for details; v2 inherits unchanged.
 
 ### Phase 6 — Event Editing & Deletion ✅ Complete
-The event popover now shows **Edit** and **Delete** buttons for non-recurring events. Recurring events show a "use Apple Calendar" note instead. Changes sync to iCloud within 5 minutes via vdirsyncer.
+The event popover shows **Edit** and **Delete** buttons for non-recurring events. Recurring events show a "use Apple Calendar" note. Changes sync to iCloud within 5 minutes via vdirsyncer.
 
-**Backend**
-- `findEventFile(uid)` — scans all CALENDAR_DIR subdirectories, parsing each `.ics` until it finds the matching `component.uid`. Returns `{ filePath, calendarName, component }` or null.
-- `extractPreservedVEventLines(rawContent)` — unfolds RFC 5545 continuation lines, then extracts every VEVENT property that the app does NOT manage (`VALARM` blocks, `X-APPLE-*`, `ORGANIZER`, attendees, etc.) so they survive an edit without being stripped.
-- `PUT /api/events/:uid` — validates input; returns 422 if `component.rrule` is present; reads and preserves unknown ICS fields; increments `SEQUENCE`; re-folds preserved lines via `foldLine()`; handles calendar moves atomically (write new file first, then unlink old — prefer duplicate over data loss).
-- `DELETE /api/events/:uid` — returns 422 if recurring; deletes the `.ics` file; vdirsyncer propagates the deletion to iCloud.
-- `loadEvents()` sets `isRecurring: !!component.rrule` on each event's `extendedProps`.
+**Backend** — `findEventFile`, `extractPreservedVEventLines`, `PUT /api/events/:uid`, `DELETE /api/events/:uid`. See main branch for full implementation detail; v2 inherits unchanged.
 
-**Frontend**
-- `editingEventUid` state (`null` = add mode, UID string = edit mode) and `popoverEvent` state (the FC event object while the popover is open).
-- `openEditModal(fcEvent)` — sets `editingEventUid`, updates modal title/button text, pre-fills all form fields. Date uses `localDateString()` (not `toISOString()`) to avoid UTC-midnight timezone shift on the Pi.
-- `populateCalendarSelect(selectedCalendar)` — optional parameter pre-selects the event's current calendar.
-- `handleFormSubmit()` — branches on `editingEventUid`: POSTs to `/api/events` when null, PUTs to `/api/events/:uid` when set. Captures `isEditing` before the `await` so the `finally` button text is correct even after `closeModal()` nulls `editingEventUid`.
-- Edit button listener captures `popoverEvent` into a local variable *before* calling `closeEventPopover()` (which nulls it), then passes it to `openEditModal()`.
-- Delete confirmation is inline within the popover (not a second modal) — better for touchscreen UX. Error on delete is shown in the confirm-text area with a Retry button.
+**Frontend** — `editingEventUid` state, `openEditModal`, inline delete confirmation. See main branch.
+
+### Phase 7 — v2 Display-Layer Rebuild ✅ Complete (this branch)
+The Wayland + labwc + greetd + watchdog stack documented at the top of this file. See `docs/V2-ARCHITECTURE.md` for full design rationale, memory budget, boot sequence, failure modes, and rollback plan.
 
 ## What We Are NOT Building
 - User login / authentication
@@ -162,6 +184,7 @@ The event popover now shows **Edit** and **Delete** buttons for non-recurring ev
 - Week or day view
 - Multi-Pi sync
 - Android support
+- Read-only root filesystem with custom OS image (deferred to potential V3 hardening; AnotterKiosk-style)
 
 ## Development Notes
 
@@ -171,18 +194,23 @@ cd app
 npm install
 CALENDAR_DIR=./data npm start
 # → http://localhost:8080
-# Weather widget fetches live from Open-Meteo using the hardcoded lat/lon defaults
-# Override with WEATHER_LAT / WEATHER_LON / WEATHER_UNITS if needed
+# Weather widget fetches live from Open-Meteo using the hardcoded lat/lon defaults.
+# Override with WEATHER_LAT / WEATHER_LON / WEATHER_UNITS if needed.
+# /api/heartbeat degrades silently on macOS (no /dev/shm) — endpoint still returns 200.
 ```
 
 Sample `.ics` files live in `app/data/Family/`, `app/data/Kids/`, `app/data/Personal/`.
 
-### Running on the Pi (reads real iCloud .ics files)
+### Running on the Pi
 ```bash
-cd ~/calendar-app
-npm install
-npm start
-# Chromium kiosk opens automatically on boot via .bash_profile → openbox → autostart
+# calendar.service starts automatically on boot; no manual `npm start` needed.
+# greetd → labwc → autostart launches Chromium kiosk on first boot after setup.sh.
+
+# To restart the app after editing server.js:
+sudo systemctl restart calendar.service
+
+# To restart the kiosk session (kills Chromium, greetd respawns labwc + autostart):
+sudo systemctl restart greetd
 ```
 
 ### Manually trigger a sync
@@ -190,8 +218,9 @@ npm start
 vdirsyncer sync
 ```
 
-### Watch the sync log
+### Watch logs
 ```bash
+sudo journalctl -u calendar.service -u greetd -u kiosk-watchdog.service -f
 tail -f ~/.local/share/vdirsyncer/sync.log
 ```
 
@@ -200,9 +229,26 @@ tail -f ~/.local/share/vdirsyncer/sync.log
 vdirsyncer discover family_calendar
 ```
 
-### Test kiosk manually (without rebooting)
+### Change which iCloud calendars are synced (without re-running setup.sh)
 ```bash
-DISPLAY=:0 chromium-browser --kiosk http://localhost:8080
+bash scripts/restrict-calendars.sh
+```
+Reads existing credentials from `~/.config/vdirsyncer/config`, fetches every iCloud collection's `displayname`, prompts you to pick which ones to keep, then rewrites the config using the explicit pair form. Backs up the prior config and restarts `calendar.service` automatically.
+
+### Test kiosk launch manually (without rebooting, on Wayland)
+```bash
+# From the wall display itself (or via SSH if WAYLAND_DISPLAY is exported):
+chromium --kiosk --ozone-platform=wayland http://localhost:8080
+```
+
+### Verify watchdog state
+```bash
+# Show heartbeat file mtime + age
+stat /dev/shm/kiosk-heartbeat
+
+# Show watchdog timer status and recent runs
+systemctl list-timers --all kiosk-watchdog.timer kiosk-reboot.timer
+journalctl -u kiosk-watchdog.service --since "10 minutes ago"
 ```
 
 ## Key Implementation Details
@@ -231,32 +277,37 @@ const WAKE_HOUR       = 6;      // 6 AM
 const WAKE_TIMEOUT_MS = 30000;  // 30 sec temporary wake on touch
 ```
 
+### Heartbeat Watchdog (server.js + index.html + scripts/kiosk-watchdog.sh)
+- Frontend `pingHeartbeat()` fetches `/api/heartbeat` once at DOMContentLoaded then every 30s via `setInterval`
+- Server endpoint touches `/dev/shm/kiosk-heartbeat` with `fs.writeFileSync`; wrapped in try/catch so it degrades silently on Mac dev (no /dev/shm)
+- `kiosk-watchdog.sh check-and-restart` (called by 60s timer): if mtime > 5 min stale → `pkill -x chromium && systemctl restart greetd`, then `touch` the heartbeat to give the new session a clean window
+- `kiosk-watchdog.sh check-and-reboot` (called by 5 min timer, OnBootSec=15min): if mtime > 15 min stale → `systemctl reboot`
+- BCM2835 hardware watchdog catches systemd itself wedging (`RuntimeWatchdogSec=30s`)
+- Tier separation (5min restart vs 15min reboot) ensures the restart has 10 min to take effect before reboot escalation
+
 ### Event Editing & Deletion (server.js + index.html)
-- `findEventFile(uid)` — O(n) scan of all .ics files; fine for household calendar sizes
-- `extractPreservedVEventLines()` — unfolds physical lines → logical lines first (RFC 5545 §3.1 continuation = leading SP/HT); then depth-tracks `BEGIN:`/`END:` pairs so entire `VALARM` sub-components are preserved as a block
-- Managed set: `UID`, `DTSTAMP`, `DTSTART`, `DTEND`, `SUMMARY`, `DESCRIPTION`, `SEQUENCE` — these are rewritten from the form; everything else is preserved verbatim
-- Preserved lines are re-folded through `foldLine()` before writing — they were unfolded during extraction, so this round-trip is required
-- `SEQUENCE` incremented: `(parseInt(component.sequence || '0', 10) || 0) + 1`
-- Calendar move is atomic: `writeFileSync(newPath)` then `unlinkSync(oldPath)` — never the reverse
-- Frontend: `isEditing` captured before the `await` in `handleFormSubmit()` because `closeModal()` on success sets `editingEventUid = null` before the `finally` block runs
-- The edit button listener must capture `popoverEvent` into a local `const ev` before `closeEventPopover()` (which sets `popoverEvent = null`) then pass `ev` to `openEditModal(ev)`
+See main `CLAUDE.md` for `findEventFile()`, `extractPreservedVEventLines()`, `SEQUENCE` increment behavior, and the `isEditing`/`popoverEvent` capture-before-await frontend pattern. v2 inherits all of this verbatim.
 
 ### Weather (server.js + index.html)
 - API: `https://api.open-meteo.com/v1/forecast` — no key, lat/lon only
 - Open-Meteo response uses `weathercode` (no underscore) in both `current` and `daily` blocks
-- Server returns: `{ enabled, current: {temp, code}, today: {high, low}, forecast: [{date, code, high}×4], units }`
+- Server returns: `{ enabled, current: {temp, code, icon, label}, today: {high, low}, forecast: [{date, code, icon, label, high}×4], units }`
+- WMO code → emoji+label lookup is server-side (v2 carries forward this Pi-Zero-2W optimization)
 - `forecast` is `daily.time.slice(1, 5)` — index 0 is today, so the 4 forecast cards are indices 1–4
-- Client `WMO_CODES` map is keyed by integer WMO code; `wmoInfo(code)` returns `{ icon, label }`
 - Forecast dates parsed as `day.date + 'T12:00:00'` (local noon) to get correct `getDay()` value
 
 ## Technology Stack
 
 | Component | Technology | Version |
 |---|---|---|
-| OS | Raspberry Pi OS Lite (64-bit) | latest |
-| Kiosk | Chromium + openbox | system |
-| Calendar sync | vdirsyncer | latest |
+| OS | Raspberry Pi OS Lite Bookworm/Trixie (64-bit) | latest |
+| Compositor | labwc (wlroots-based Wayland) | system |
+| Login manager | greetd (autologin to labwc on vt7) | system |
+| Kiosk browser | Chromium (Wayland/Ozone, native VC4 GL) | system |
+| Networking | ifupdown + wpa_supplicant | system |
+| Calendar sync | vdirsyncer (via pipx) | latest |
 | Backend | Node.js + Express | 22.x LTS |
 | ICS parsing | node-ical | latest |
-| Display UI | FullCalendar.js | 6.1.15 |
+| Display UI | FullCalendar.js (vendored) | 6.1.15 |
 | Weather | Open-Meteo API | free / no key |
+| Watchdog | bash + systemd timers + BCM2835 hwdog | system |
