@@ -22,7 +22,7 @@ We made six architectural decisions in v1 that all turned out to be wrong on thi
 | X11 + openbox + `.bash_profile`→`startx` | **Display manager** (greetd or LightDM) → **Wayland/labwc** or X11+LightDM | Shell-rc auto-startx has zero crash recovery. A real DM auto-restarts the session. Wayland/labwc is also ~40MB lighter than X11/openbox. |
 | Chromium with `--use-gl=swiftshader` (forced software rendering) | **Native VC4/V3D hardware GL** via Wayland/Ozone or vc4-kms-v3d dtoverlay | We forced software rendering to escape the Debian Chromium wrapper's `chromium.d` flag fights. The right answer was to switch the display server, not the GL backend. SwiftShader burns CPU instead of using the GPU, doubly costly on this hardware. |
 | Firefox-ESR pivot after Chromium "failed" | **Vanilla Chromium** with `--no-memcheck --kiosk --process-per-site --enable-low-end-device-mode` | The Chromium network-service crashes were a *symptom* of memory pressure (swap thrashing destabilizes the IPC layer), not a Chromium bug. Switching browsers didn't address the root cause; it just used more memory. |
-| Default Raspberry Pi OS install (NetworkManager, Bluetooth, avahi, ModemManager, all defaults) | **Aggressively stripped** — AnotterKiosk explicitly removes ~30 packages and disables ~22 services | NetworkManager alone is ~30–40MB resident. Bluetooth + avahi + ModemManager add ~25MB more. None of them are needed for this device. |
+| Default Raspberry Pi OS install (NetworkManager, Bluetooth, avahi, ModemManager, all defaults) | **Selectively stripped** — Bluetooth, avahi, ModemManager, dphys-swapfile, triggerhappy, plymouth removed; NetworkManager kept after the first deploy taught us why ([commit 084d184](#)) | NetworkManager alone is ~30–40MB resident, but removing it mid-setup over SSH kills the user's connection before any replacement networking can come up. We accept the ~30MB cost for SSH safety. Bluetooth + avahi + ModemManager + plymouth still account for ~50MB resident saved. |
 | No watchdog — if browser hangs, wall stays blank until manual reboot | **Heartbeat watchdog** that restarts session on stale heartbeat, reboots on persistent failure | Browsers occasionally hang on a single bad render, even with all other things right. We need a recovery path that doesn't require a human walking up to the wall with an SSH client. |
 
 V2 reverses all six.
@@ -70,7 +70,7 @@ V2 takes the **display stack from TOLDOTECHNIK** (Wayland is the modern directio
 │ OS layer (heavily stripped from v1)                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  Raspberry Pi OS Lite Bookworm 64-bit                           │
-│  Networking: ifupdown + wpa_supplicant (NO NetworkManager)      │
+│  Networking: NetworkManager (kept — see commit 084d184)         │
 │  Removed: bluetooth, avahi-daemon, ModemManager, dphys-swapfile,│
 │           triggerhappy, ModemManager, plymouth                  │
 │  No swap file. No zram. vm.swappiness irrelevant (no swap).    │
@@ -108,7 +108,7 @@ chromium \
 ```
 Notably absent: `--use-gl=*`, `--disable-gpu`, `--memory-pressure-off`, `--disable-dev-shm-usage`, profile-wipe scripts, `chromium.d` overrides. We don't need any of that on Wayland.
 
-**Networking: ifupdown + wpa_supplicant.** NetworkManager is removed (`apt remove network-manager`). Wi-Fi credentials live in `/etc/wpa_supplicant/wpa_supplicant.conf`. Saves ~30–40MB resident vs. NetworkManager. Setup script writes the wpa_supplicant config from interactive prompts during install (same UX as v1).
+**Networking: NetworkManager (kept).** Originally planned to swap NM for ifupdown + wpa_supplicant for ~30MB savings. The first v2 deploy proved why this was wrong: removing NM mid-script over SSH killed the user's connection before any replacement networking could be installed and configured. The architecture had a fundamental sequence-dependency bug. v2 keeps NetworkManager — manage Wi-Fi via the Imager's pre-flash settings, `nmtui`, or `raspi-config`. A future hardening pass could defer the network swap to a one-shot systemd unit that runs post-reboot when no SSH session is at risk, but that's V3 work.
 
 **Process supervision: systemd, three units.**
 - `calendar.service` — Node app (carried forward from v1, unchanged)
@@ -144,18 +144,18 @@ Notably absent: `--use-gl=*`, `--disable-gpu`, `--memory-pressure-off`, `--disab
 | Component | RAM (resident) |
 |---|---|
 | Linux kernel + base userspace + systemd | ~80MB |
-| wpa_supplicant + sshd + dbus + journald | ~25MB |
+| NetworkManager + sshd + dbus + journald | ~55MB |
 | greetd + labwc + seatd | ~30MB |
 | Chromium (low-end-device-mode, single content process) | ~120–180MB |
 | Node.js + Express (calendar.service) | ~50–70MB |
 | vdirsyncer (idle; ~25MB only during 5-min cron run) | ~0MB |
 | kiosk-watchdog | ~5MB |
-| **Total resident** | **~310–390MB** |
-| **Headroom** | **~25–105MB** |
+| **Total resident** | **~340–420MB** |
+| **Headroom** | **~−4 to 76MB** |
 
 **v1 footprint (resident, measured):** ~250MB + 379MB swap = ~629MB working set on a 416MB system. The ~213MB excess thrashed against SD card.
 
-**Comfortable, not luxurious.** Headroom of 25–105MB is enough for vdirsyncer's cron runs to land without OOM. If Chromium drifts upward over hours (which it will), the watchdog catches it before the system enters death spiral.
+**Tight, not comfortable.** With NetworkManager kept (post-first-deploy lesson), headroom drops to a worst-case 4MB negative — meaning at the high end of every component's range, we're 4MB over budget. In practice Chromium with low-end-device-mode + low-end Wayland workload runs closer to 120–140MB, leaving genuine headroom of 30–60MB. If Chromium drifts upward over hours (which it will), the watchdog catches it via OOM before the system enters death spiral. If headroom proves consistently negative in soak testing, the V3 hardening pass should defer NM removal to a post-reboot systemd unit.
 
 ---
 
@@ -166,7 +166,7 @@ Notably absent: `--use-gl=*`, `--disable-gpu`, `--memory-pressure-off`, `--disab
 | 0 | Power on |
 | 0–15 | Bootloader, kernel, initramfs |
 | 15–25 | systemd starts, mounts, journald, syslog |
-| 25–35 | wpa_supplicant connects, dhcp lease (skipped if no network) |
+| 25–35 | NetworkManager brings up Wi-Fi, dhcp lease (skipped if no network) |
 | 30–40 | calendar.service starts (Node + Express on :8080) |
 | 25–35 | greetd starts on vt7 (parallel with calendar.service) |
 | 35–45 | greetd autologin → labwc compositor up |
@@ -239,8 +239,8 @@ The hardware watchdog (`bcm2835_wdt`) is enabled by adding `dtparam=watchdog=on`
 Pseudocode of the new flow:
 
 ```
-Step  1: System update + remove unwanted packages
-         apt remove network-manager bluetooth bluez avahi-daemon
+Step  1: System update + remove unwanted packages (NOT NetworkManager)
+         apt remove bluetooth bluez avahi-daemon
                     modemmanager dphys-swapfile triggerhappy plymouth
          apt autoremove
 
@@ -250,14 +250,11 @@ Step  2: Install required packages (--no-install-recommends)
            chromium \
            nodejs npm \
            vdirsyncer \
-           wpasupplicant ifupdown \
            curl ca-certificates
 
-Step  3: Configure networking (interactive Wi-Fi setup)
-         Prompt for SSID + password
-         Write /etc/wpa_supplicant/wpa_supplicant.conf
-         Write /etc/network/interfaces.d/wlan0
-         Enable wpa_supplicant@wlan0 + systemd-networkd
+Step  3: Verify network connectivity (NetworkManager handles Wi-Fi)
+         If no network: abort with instructions to use Imager pre-flash,
+         nmtui, or raspi-config to configure Wi-Fi, then re-run.
 
 Step  4: Configure boot params (config.txt / cmdline.txt)
          Add: dtoverlay=vc4-kms-v3d
@@ -338,7 +335,7 @@ These are decisions we should discuss before or during implementation:
 If v2 doesn't work after 24-hour soak testing:
 
 1. **Quick revert (5 min):** Reflash the Pi from a v1 SD card image (assuming we image the v1 install before starting). Or `git checkout pi-zero-2w` and re-run v1 setup.sh.
-2. **Slow revert (1 hr):** Manually undo each v2 change — re-install NetworkManager, restore X11, etc. Not recommended; reflash is faster.
+2. **Slow revert (1 hr):** Manually undo each v2 change — restore X11, install openbox, recreate `.bash_profile` startx, re-add the swap file, etc. (NetworkManager stayed in v2 so no networking changes to revert.) Not recommended; reflash is faster.
 3. **Hardware escape hatch:** Pi 4 (2GB) is ~$45 and runs the v1 stack without modification. If both v1 and v2 fail on the Pi Zero 2 W, this is the honest answer.
 
 We should image the v1 SD card before flashing v2 — `dd if=/dev/mmcblk0 of=v1-backup.img bs=4M` on another machine. ~2GB image, quick to write back.

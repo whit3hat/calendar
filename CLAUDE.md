@@ -12,7 +12,7 @@ This branch is a **ground-up rebuild** of the Pi Zero 2 W variant. The original 
 | Display server | X11 + openbox + `.bash_profile` → `startx` | **Wayland + labwc + greetd** (real login manager) | Wayland/labwc is ~40MB lighter; greetd auto-restarts on crash; chains via systemd target instead of shell rc race. |
 | GPU | `--use-gl=swiftshader` (forced software rendering) | **Native VC4 KMS hardware GL** via Wayland/Ozone | We forced software rendering to escape the Debian Chromium wrapper's `chromium.d` flag fights. Wayland/Ozone uses VC4 natively without that fight. |
 | Browser | Firefox-ESR (after Chromium "failed") | **Vanilla Chromium** with `--no-memcheck --process-per-site --enable-low-end-device-mode` | Chromium's network-service crashes were a *symptom* of memory pressure, not a Chromium bug. Switching browsers used more memory and didn't address the root cause. |
-| OS footprint | Default install (NetworkManager, bluetooth, avahi, ModemManager) | **Aggressively stripped** — `apt remove network-manager bluetooth avahi-daemon modemmanager dphys-swapfile triggerhappy plymouth` | Saves ~80MB resident. NetworkManager replaced by ifupdown + wpa_supplicant. |
+| OS footprint | Default install (NetworkManager, bluetooth, avahi, ModemManager) | **Selectively stripped** — `apt remove bluetooth avahi-daemon modemmanager dphys-swapfile triggerhappy plymouth` | Saves ~50MB resident. NetworkManager kept (originally planned to remove for another ~30MB but doing so mid-script over SSH killed the first deploy — see commit 084d184). |
 | Recovery | None — if browser hangs, wall stays blank until manual reboot | **Heartbeat watchdog** (kiosk-watchdog.timer every 60s; reboot escalation at 15 min) | Browsers occasionally hang on a single bad render. Recovery must not require a human walking up to the wall. |
 
 **Full design rationale:** see `docs/V2-ARCHITECTURE.md`. **Reference projects studied:** TOLDOTECHNIK Raspberry-Pi-Kiosk-Display-System (Wayland/labwc primer) and Manawyrm AnotterKiosk (no-swap + watchdog patterns). **Status:** all v2 files written, awaiting fresh-SD-card flash and 24-hour soak test on real hardware. The original `pi-zero-2w` branch is deliberately not merged or deleted — it remains as a record of what was tried and why it failed. **`main` remains the canonical Pi 5 build.**
@@ -79,7 +79,7 @@ calendar/
 | Display server | **Wayland** (labwc compositor, greetd login manager, vt7) |
 | GPU | **Native VC4 KMS hardware GL** via Wayland/Ozone (no SwiftShader) |
 | Kiosk browser | **Vanilla Chromium** with `--kiosk --no-memcheck --process-per-site --enable-low-end-device-mode --ozone-platform=wayland` |
-| Networking | **ifupdown + wpa_supplicant** (NetworkManager removed) |
+| Networking | **NetworkManager** (kept; manage Wi-Fi via Imager pre-flash, `nmtui`, or `raspi-config`) |
 | Memory | **No swap** (intentional — see V2-ARCHITECTURE.md) |
 | Process supervision | systemd: `calendar.service`, `greetd.service`, `kiosk-watchdog.timer`, `kiosk-reboot.timer` + BCM2835 hardware watchdog |
 | Cloud sync | iCloud CalDAV — direct, no intermediary server |
@@ -109,9 +109,9 @@ Phases 1-6 (the application layer) carry forward unchanged from v1; their behavi
 
 Run on a fresh Raspberry Pi OS Lite install (or a Pi previously running v1 — the script cleans up v1 artifacts on the way through). Automates:
 - Cleanup of v1 leftovers (swap file, `.bash_profile` startx, openbox config, Firefox profile, `cgroup_disable=memory`)
-- System update + dependency install via `apt --no-install-recommends` (Node.js 22 LTS, vdirsyncer via pipx, Chromium, greetd, labwc, seatd, wlr-randr, wpa_supplicant)
-- Removal of NetworkManager, Bluetooth, avahi, ModemManager, dphys-swapfile, plymouth, triggerhappy (~80MB resident saved)
-- Interactive Wi-Fi setup writing `/etc/wpa_supplicant/wpa_supplicant-wlan0.conf`
+- System update + dependency install via `apt --no-install-recommends` (Node.js 22 LTS, vdirsyncer via pipx, Chromium, greetd, labwc, seatd, wlr-randr)
+- Removal of Bluetooth, avahi, ModemManager, dphys-swapfile, plymouth, triggerhappy (~50MB resident saved). NetworkManager is deliberately kept — removing it mid-script over SSH killed the first deploy (commit 084d184). Wi-Fi managed via Imager pre-flash settings or `nmtui`.
+- Network connectivity verification (aborts with clear instructions if Wi-Fi isn't pre-configured)
 - `vc4-kms-v3d` overlay + `dtparam=watchdog=on` in `/boot/firmware/config.txt`
 - Interactive iCloud credential prompt → writes `~/.config/vdirsyncer/config`
 - `vdirsyncer discover` + initial sync → `.ics` files land in `~/.local/share/calendar/`
@@ -304,7 +304,7 @@ See main `CLAUDE.md` for `findEventFile()`, `extractPreservedVEventLines()`, `SE
 | Compositor | labwc (wlroots-based Wayland) | system |
 | Login manager | greetd (autologin to labwc on vt7) | system |
 | Kiosk browser | Chromium (Wayland/Ozone, native VC4 GL) | system |
-| Networking | ifupdown + wpa_supplicant | system |
+| Networking | NetworkManager (default RPi OS) | system |
 | Calendar sync | vdirsyncer (via pipx) | latest |
 | Backend | Node.js + Express | 22.x LTS |
 | ICS parsing | node-ical | latest |

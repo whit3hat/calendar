@@ -45,7 +45,7 @@ The Pi has logs scattered across systemd's journal, the vdirsyncer cron output, 
 | 🛡️ Watchdog (restart escalation) | systemd journal | `sudo journalctl -u kiosk-watchdog.service` |
 | 💣 Watchdog (reboot escalation) | systemd journal | `sudo journalctl -u kiosk-reboot.service` |
 | 📡 vdirsyncer (iCloud sync) | log file (cron output) | `tail -f ~/.local/share/vdirsyncer/sync.log` |
-| 🔌 Wi-Fi / wpa_supplicant | systemd journal | `sudo journalctl -u wpa_supplicant@wlan0 -f` |
+| 🔌 Wi-Fi / NetworkManager | systemd journal | `sudo journalctl -u NetworkManager -f` |
 | 🌐 Networking (interface state) | journalctl | `journalctl -u networking -f` |
 | 🧠 Kernel (OOM kills, hardware errors) | dmesg | `sudo dmesg --human --follow` |
 | 🫀 Heartbeat file | `/dev/shm/kiosk-heartbeat` | `stat /dev/shm/kiosk-heartbeat` shows mtime |
@@ -61,7 +61,7 @@ The Pi has logs scattered across systemd's journal, the vdirsyncer cron output, 
 
 ```bash
 # Show all v2-relevant logs together (the Big Picture™)
-sudo journalctl -u calendar.service -u greetd -u kiosk-watchdog.service -u wpa_supplicant@wlan0 -f
+sudo journalctl -u calendar.service -u greetd -u kiosk-watchdog.service -u NetworkManager -f
 
 # Check service status (✅ active, ❌ failed, 💤 inactive)
 systemctl status calendar.service greetd kiosk-watchdog.timer kiosk-reboot.timer
@@ -290,32 +290,32 @@ timedatectl
 
 ## 📶 Wi-Fi Won't Connect / Pi Has No Network
 
-v2 uses **ifupdown + wpa_supplicant** (NetworkManager was removed because it ate ~30MB of RAM). This is a different flow than stock RPi OS, and `sudo raspi-config` won't manage it.
+v2 keeps **NetworkManager** (default RPi OS networking). The original v2 plan was to swap NM out for ifupdown + wpa_supplicant for ~30MB savings, but removing NM mid-setup over SSH killed the first deployment (see commit 084d184). NetworkManager stays — use the standard RPi tooling.
 
 ```bash
 # 1. Is the Wi-Fi interface up?
 ip addr show wlan0
 
-# 2. Is wpa_supplicant alive?
-systemctl status wpa_supplicant@wlan0
+# 2. Is NetworkManager alive?
+systemctl status NetworkManager
 
-# 3. What does it see?
-sudo iw dev wlan0 scan | grep SSID | head -10
+# 3. What networks does it see?
+sudo nmcli dev wifi list
 
-# 4. What does it think it's configured to connect to?
-sudo cat /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+# 4. What's it currently connected to?
+nmcli -t -f NAME,DEVICE,STATE connection show --active
 
-# 5. Force reconnect
-sudo systemctl restart wpa_supplicant@wlan0
-sudo ifdown wlan0; sudo ifup wlan0
+# 5. Connect to a different network from the command line
+sudo nmcli dev wifi connect "YOUR_SSID" password "YOUR_PASSWORD"
 
-# 6. Does Pi have an IP?
+# 6. Or use the curses-mode UI (easier on a touchscreen-less Pi)
+sudo nmtui
+
+# 7. Does Pi have an IP?
 ip route get 1.1.1.1
 ```
 
-**To change Wi-Fi network:** edit `/etc/wpa_supplicant/wpa_supplicant-wlan0.conf` (the `ssid="..."` and `psk="..."` lines), then `sudo systemctl restart wpa_supplicant@wlan0`. Or just re-run `bash scripts/setup.sh` — it'll re-prompt if you have no network.
-
-**Don't run `sudo raspi-config` for Wi-Fi.** It tries to use NetworkManager, which we deliberately removed. Edit the wpa_supplicant config directly.
+**To change Wi-Fi network:** `sudo nmtui` is the easiest interactive way. Or `sudo raspi-config → System Options → Wireless LAN`. Or use `nmcli` directly as in commands 4 + 5 above. The Imager's pre-flash Wi-Fi config also works fine — just reflash if you want to change networks and don't mind a clean slate.
 
 ---
 
@@ -463,7 +463,7 @@ The TL;DR for the impatient:
 - **No swap** instead of 1GB SD-card swap: SD-card swap on a 512MB box is a thrashing trap, not a safety net; without it, the kernel either fits in RAM or OOM-kills (recoverable)
 - **Native VC4 KMS GL** instead of `--use-gl=swiftshader`: hardware does the rendering instead of CPU, doubly cheaper on this hardware
 - **Vanilla Chromium** instead of Firefox-ESR: Chromium's earlier crashes were a *symptom* of memory pressure, not a Chromium bug; switching browsers used more memory and didn't help
-- **NetworkManager removed**, replaced with ifupdown + wpa_supplicant: saves ~30MB; the only price is `raspi-config` Wi-Fi management doesn't work
+- **NetworkManager kept** (original plan was to remove it for ~30MB savings, but doing so mid-setup over SSH killed the first deploy — see commit 084d184; ~30MB cost accepted for SSH safety and standard tooling)
 - **Heartbeat watchdog** exists because browsers occasionally hang on a single bad render and we refuse to require a human walking up to the wall with an SSH client to fix it
 
 ---

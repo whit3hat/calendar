@@ -71,7 +71,7 @@ No subscriptions. No new apps for your family. No cloud middlemen. Just an ultra
 | Display server | **Wayland (labwc compositor + greetd login manager on vt7)** |
 | GPU | Native VC4 KMS hardware GL (no SwiftShader) |
 | Kiosk browser | Vanilla Chromium with `--kiosk --no-memcheck --enable-low-end-device-mode --ozone-platform=wayland` |
-| Networking | ifupdown + wpa_supplicant (NetworkManager removed) |
+| Networking | NetworkManager (default RPi OS — manage Wi-Fi via `nmtui` / `raspi-config`) |
 | iCloud sync | [vdirsyncer](https://vdirsyncer.pimutils.org/) — bidirectional CalDAV |
 | Backend | Node.js 22 LTS + Express |
 | ICS parsing | node-ical |
@@ -179,9 +179,9 @@ bash scripts/setup.sh
 The script handles 11 steps end-to-end and is **idempotent** (safe to re-run; auto-cleans up v1 artifacts if upgrading from the original `pi-zero-2w` branch):
 
 - ✅ Cleans up v1 leftovers (swap file, `.bash_profile` startx, openbox config, Firefox profile)
-- ✅ Updates the system and installs dependencies via `apt --no-install-recommends` (Node.js 22, vdirsyncer via pipx, Chromium, greetd, labwc, seatd, wlr-randr, wpa_supplicant)
-- ✅ Aggressively removes NetworkManager, Bluetooth, avahi, ModemManager, dphys-swapfile, plymouth (~80MB resident saved)
-- ✅ Prompts for Wi-Fi credentials and configures `wpa_supplicant`
+- ✅ Updates the system and installs dependencies via `apt --no-install-recommends` (Node.js 22, vdirsyncer via pipx, Chromium, greetd, labwc, seatd, wlr-randr)
+- ✅ Removes Bluetooth, avahi, ModemManager, dphys-swapfile, plymouth (~50MB resident saved). **NetworkManager is kept** — manage Wi-Fi via the Imager's pre-flash settings, `nmtui`, or `raspi-config`.
+- ✅ Verifies network connectivity (aborts with clear instructions if not configured)
 - ✅ Adds `dtoverlay=vc4-kms-v3d`, `gpu_mem=64`, `dtparam=watchdog=on` to `/boot/firmware/config.txt`
 - ✅ Prompts for your iCloud email and app-specific password
 - ✅ Writes `~/.config/vdirsyncer/config` (permissions `600` — only you can read it)
@@ -430,8 +430,7 @@ The v2 rebuild replaces v1's failed X11 + openbox + Chromium-with-software-rende
 - ✅ greetd autologin → labwc compositor → curl-poll → Chromium kiosk on every boot
 - ✅ Heartbeat watchdog: frontend pings `/api/heartbeat` every 30s; if stale >5 min, restart greetd; if still stale >15 min, reboot the Pi
 - ✅ BCM2835 hardware watchdog catches systemd itself wedging
-- ✅ NetworkManager replaced by ifupdown + wpa_supplicant (~30MB saved)
-- ✅ Bluetooth, avahi, ModemManager, plymouth all stripped (~50MB more saved)
+- ✅ Bluetooth, avahi, ModemManager, plymouth all stripped (~50MB saved); NetworkManager kept for SSH safety during setup (originally planned to swap to ifupdown but the swap killed the first deploy — see commit 084d184)
 - ✅ Per-deployment config in `/boot/firmware/calendar.env` (edit from any computer by popping the SD card)
 
 Future ideas (not currently planned):
