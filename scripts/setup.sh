@@ -201,7 +201,15 @@ echo "(Saying N to any prompt would abort discover — auto-confirming all.)"
 echo "To narrow down which calendars sync after setup, run:"
 echo "    bash ${APP_DIR}/scripts/restrict-calendars.sh"
 echo
+# Disable pipefail just for the yes pipeline. `yes` runs forever and gets
+# SIGPIPE (exit 141) when vdirsyncer closes stdin. With pipefail on, that
+# 141 wins over vdirsyncer's clean 0 exit and set -e silently kills the
+# script with no error message. Turning pipefail off here makes the
+# pipeline return vdirsyncer's exit status, which is what we actually
+# care about. Re-enable immediately after.
+set +o pipefail
 yes | vdirsyncer discover family_calendar
+set -o pipefail
 vdirsyncer sync
 
 # Cron job for sync every 5 min (only add if not already present)
