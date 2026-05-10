@@ -69,9 +69,12 @@ fi
 sudo apt update
 sudo apt full-upgrade -y
 
-# Strip unwanted packages — saves ~80MB resident at runtime
+# Strip unwanted packages — saves ~50MB resident at runtime.
+# Notably NOT removing network-manager: doing so mid-script over SSH kills
+# the user's connection before any replacement networking can be brought
+# up. v2 keeps NetworkManager (~30MB cost) in exchange for SSH safety and
+# standard Wi-Fi tooling (nmtui, raspi-config).
 sudo apt remove -y --purge \
-  network-manager \
   bluetooth bluez bluez-firmware \
   avahi-daemon \
   modemmanager \
@@ -96,7 +99,6 @@ sudo apt install -y --no-install-recommends \
   nodejs \
   pipx \
   curl ca-certificates rsync \
-  wpasupplicant ifupdown isc-dhcp-client iw \
   cron
 
 # vdirsyncer via pipx (avoids system Python conflicts)
@@ -112,46 +114,23 @@ if [[ -f "${USER_HOME}/.bash_profile" ]] && ! grep -q '\.bashrc' "${USER_HOME}/.
 fi
 
 # -----------------------------------------------------------------------------
-# Step 3 — Configure networking (interactive Wi-Fi setup if not already up)
+# Step 3 — Verify network connectivity (NetworkManager handles Wi-Fi on v2)
 # -----------------------------------------------------------------------------
-log "Step 3/11: Configure Wi-Fi (ifupdown + wpa_supplicant)"
+log "Step 3/11: Verify network connectivity"
 
-if ip route get 1.1.1.1 &>/dev/null; then
-  echo "Network already up — skipping Wi-Fi prompt"
-else
-  read -r -p "Wi-Fi SSID: " WIFI_SSID
-  read -r -s -p "Wi-Fi password: " WIFI_PASS
-  echo
-
-  sudo tee /etc/wpa_supplicant/wpa_supplicant-wlan0.conf >/dev/null <<EOF
-ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
-update_config=1
-country=US
-
-network={
-    ssid="${WIFI_SSID}"
-    psk="${WIFI_PASS}"
-    key_mgmt=WPA-PSK
-}
-EOF
-  sudo chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
-
-  sudo mkdir -p /etc/network/interfaces.d
-  sudo tee /etc/network/interfaces.d/wlan0 >/dev/null <<EOF
-auto wlan0
-iface wlan0 inet dhcp
-EOF
-
-  sudo systemctl enable --now wpa_supplicant@wlan0 || true
-  sudo ifup wlan0 || true
-
-  warn "Waiting up to 30s for network..."
-  for _ in {1..30}; do
-    ip route get 1.1.1.1 &>/dev/null && break
-    sleep 1
-  done
+# v2 keeps NetworkManager installed and active (see Step 1 comment for why).
+# Wi-Fi is configured via the Raspberry Pi Imager's pre-flash settings, or
+# manually via nmtui / raspi-config. This step just confirms there's a
+# working internet path before continuing — every subsequent step needs it.
+if ! ip route get 1.1.1.1 &>/dev/null; then
+  warn "No network detected. NetworkManager manages Wi-Fi on v2."
+  warn "Options:"
+  warn "  - Configure interactively:  sudo nmtui"
+  warn "  - Configure via Raspberry Pi tooling:  sudo raspi-config"
+  warn "  - Re-flash the SD card with the Imager and pre-set Wi-Fi via 'Edit Settings'"
+  die "Aborting until network is configured"
 fi
-ip route get 1.1.1.1 &>/dev/null || die "No network — cannot continue"
+echo "Network up: $(ip -o -4 addr show | grep -v ' lo ' | awk '{print $2, $4}')"
 
 # -----------------------------------------------------------------------------
 # Step 4 — Boot params: VC4 KMS GL + hardware watchdog
