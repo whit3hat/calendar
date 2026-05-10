@@ -190,7 +190,18 @@ else
   echo "Existing vdirsyncer config preserved at ${VDIR_CONFIG_DIR}/config"
 fi
 
-vdirsyncer discover family_calendar
+# vdirsyncer's `discover` will ask "Should vdirsyncer attempt to create it?"
+# for every iCloud collection it finds. There's no "skip" option — saying N
+# to any prompt is treated as a fatal error and aborts discover entirely.
+# Auto-confirm all collections so the script can complete; the user narrows
+# down which calendars actually sync via restrict-calendars.sh below.
+echo
+echo "vdirsyncer will now create local copies for ALL iCloud collections."
+echo "(Saying N to any prompt would abort discover — auto-confirming all.)"
+echo "To narrow down which calendars sync after setup, run:"
+echo "    bash ${APP_DIR}/scripts/restrict-calendars.sh"
+echo
+yes | vdirsyncer discover family_calendar
 vdirsyncer sync
 
 # Cron job for sync every 5 min (only add if not already present)
@@ -317,6 +328,9 @@ Stack installed:
 
 Per-deployment config: ${BOOT_FW}/calendar.env
   Editable from any computer by popping the SD card.
+
+To narrow down which iCloud calendars sync (skip Reminders, duplicates, etc.):
+  bash ${APP_DIR}/scripts/restrict-calendars.sh
 
 Reboot to start the kiosk:
   sudo reboot
