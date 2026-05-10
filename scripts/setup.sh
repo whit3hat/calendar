@@ -264,8 +264,14 @@ mkdir -p "${USER_HOME}/.config/labwc"
 install -m 755 "${APP_DIR}/config/labwc/autostart" "${USER_HOME}/.config/labwc/autostart"
 install -m 644 "${APP_DIR}/config/labwc/rc.xml"   "${USER_HOME}/.config/labwc/rc.xml"
 
-# User must be in the seat group for seatd
-sudo usermod -aG seat "${USER_NAME}"
+# Some distros' seatd postinst creates a 'seat' group; Debian Trixie's
+# doesn't. When greetd is the login manager (our setup), it handles seat
+# permissions itself via the session abstraction, so group membership
+# isn't required for labwc/Chromium to launch. Add the user to the group
+# only if it exists, so the script works on either flavor of distro.
+if getent group seat &>/dev/null; then
+  sudo usermod -aG seat "${USER_NAME}"
+fi
 
 # Boot to graphical target (greetd will spawn labwc on vt7)
 sudo systemctl enable greetd
