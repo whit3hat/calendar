@@ -24,6 +24,15 @@ const WEATHER_UNITS = (process.env.WEATHER_UNITS || 'fahrenheit').toLowerCase();
 const weatherCache = { data: null, fetchedAt: 0 };
 const WEATHER_CACHE_MS = 15 * 60 * 1000; // 15 minutes
 
+// Pi Zero 2 W trim: cache the parsed-and-filtered events for 5 minutes so the
+// renderer's repeated polls don't re-parse 100+ .ics files every time. The
+// vdirsyncer cron runs every 5 min, so the worst-case staleness is ~10 min —
+// fine for a wall calendar.
+const eventsCache = { data: null, fetchedAt: 0 };
+const EVENTS_CACHE_MS  = 5 * 60 * 1000;
+const EVENTS_WINDOW_MS = 60 * 24 * 60 * 60 * 1000; // ±60 days from today
+const NOTES_MAX_LENGTH = 200; // truncate long notes (job descriptions, etc.)
+
 // WMO weather interpretation codes → emoji + label.
 // Resolved server-side on the Pi Zero 2 W variant so the browser never has
 // to ship a 30-entry lookup map or do per-render lookups.
@@ -84,6 +93,16 @@ function formatDate(date, allDay) {
          `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+// node-ical sometimes returns `{ params: {...}, val: "..." }` for properties
+// that carry RFC 5545 parameters like `SUMMARY;LANGUAGE=en-US:Title`.
+// FullCalendar needs plain strings, so flatten in one place.
+function normalizeText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && typeof value.val === 'string') return value.val;
+  return String(value);
+}
+
 // Read all .ics files from CALENDAR_DIR and return FullCalendar-compatible
 // event objects. Each subdirectory is treated as a separate calendar.
 function loadEvents() {
@@ -116,14 +135,14 @@ function loadEvents() {
 
           events.push({
             id: component.uid || file,
-            title: component.summary || '(No title)',
+            title: normalizeText(component.summary) || '(No title)',
             start: formatDate(component.start, allDay),
             end: formatDate(component.end, allDay),
             allDay,
             color,
             extendedProps: {
               calendarName,
-              notes:       component.description || '',
+              notes:       normalizeText(component.description),
               isRecurring: !!component.rrule,
             },
           });
@@ -326,10 +345,37 @@ app.use(express.static(path.join(__dirname, '../public')));
 // ── Routes ─────────────────────────────────────────────────────
 
 // GET /api/events
-// Returns all calendar events as FullCalendar-compatible JSON.
+// Returns calendar events within ±60 days of today as FullCalendar-compatible
+// JSON. Cached for 5 minutes so the kiosk's repeated polls don't thrash the
+// .ics parser on a 416MB Pi.
 app.get('/api/events', (req, res) => {
   try {
-    res.json(loadEvents());
+    if (eventsCache.data && Date.now() - eventsCache.fetchedAt < EVENTS_CACHE_MS) {
+      return res.json(eventsCache.data);
+    }
+
+    const now   = Date.now();
+    const lower = now - EVENTS_WINDOW_MS;
+    const upper = now + EVENTS_WINDOW_MS;
+
+    const filtered = loadEvents().filter(e => {
+      if (!e.start) return false;
+      const t = new Date(e.start).getTime();
+      return Number.isFinite(t) && t >= lower && t <= upper;
+    });
+
+    // Truncate notes so we don't ship 2KB job-description blobs the
+    // grid never displays. Popover still gets a useful preview.
+    for (const e of filtered) {
+      const n = e.extendedProps && e.extendedProps.notes;
+      if (typeof n === 'string' && n.length > NOTES_MAX_LENGTH) {
+        e.extendedProps.notes = n.slice(0, NOTES_MAX_LENGTH) + '…';
+      }
+    }
+
+    eventsCache.data      = filtered;
+    eventsCache.fetchedAt = Date.now();
+    res.json(filtered);
   } catch (err) {
     console.error('Error loading events:', err);
     res.status(500).json({ error: 'Failed to load events' });
@@ -475,6 +521,8 @@ app.post('/api/events', (req, res) => {
     return res.status(500).json({ error: 'Failed to save event' });
   }
 
+  eventsCache.fetchedAt = 0; // invalidate so the new event shows on next poll
+
   // ── Build and return the new event in FullCalendar format ─────
   const color = calendarColor(calendarName);
   const endDate = allDay ? nextDay(date) : null;
@@ -589,6 +637,8 @@ app.put('/api/events/:uid', (req, res) => {
     return res.status(500).json({ error: 'Failed to update event' });
   }
 
+  eventsCache.fetchedAt = 0; // invalidate so the edit shows on next poll
+
   // ── Return updated event in FullCalendar format ───────────────
   const color   = calendarColor(calendarName);
   const endDate = allDay ? nextDay(date) : null;
@@ -627,6 +677,8 @@ app.delete('/api/events/:uid', (req, res) => {
     console.error('Failed to delete event:', err);
     return res.status(500).json({ error: 'Failed to delete event' });
   }
+
+  eventsCache.fetchedAt = 0; // invalidate so the deletion shows on next poll
 
   res.status(204).send();
 });
